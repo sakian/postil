@@ -1,0 +1,5 @@
+{
+  "name": "postil-spike",
+  "description": "Phase 0 spike: Stop hook that blocks turn-end while review threads are unanswered",
+  "version": "0.0.1"
+}
