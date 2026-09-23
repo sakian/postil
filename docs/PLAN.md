@@ -67,7 +67,7 @@ Everything you listed, and where it lands.
 
 | Improvement | Design |
 |---|---|
-| Local, not online | Server binds 127.0.0.1 with a random bearer token in the opened URL. State in `.postil/` in the repo, excluded via `.git/info/exclude`. |
+| Local, not online | Server binds 127.0.0.1 with a random bearer token in the opened URL, and rejects foreign `Host` and `Origin` headers. State lives in the repository's git dir (`.git/postil/`), where `git clean -fdx` cannot delete it and snapshots cannot capture it. |
 | Automatic Claude pickup | Monitor + hooks as in section 1. No "go look at the review" prompt. |
 | Fast inline/split toggle | Single keystroke (`s`) and a header toggle. Preference persisted. No config screen. |
 | Mark sections done | Each hunk (or an arbitrary selected line range) can be marked done. Done sections collapse to a one-line summary and dim in the tree count. Stored with blob SHA; invalidated on change. File-done is just all-sections-done. |
@@ -78,25 +78,29 @@ Everything you listed, and where it lands.
 
 ## 4. Architecture
 
-Single TypeScript repo, Node 24 (present on this machine; Go is not).
+Single TypeScript package on Node 24. Node runs the TypeScript directly (type stripping), so the
+server has no build step; `tsc` only typechecks. Changed from the original workspace layout in
+Phase 1: one package is simpler and avoids type stripping's refusal to run `.ts` under `node_modules`.
 
 ```
 postil/
-  package.json            workspaces
-  packages/server/        Hono HTTP + ws, node:sqlite, git engine, MCP stdio proxy
-  packages/web/           Vite + React + TS, custom diff renderer, shiki highlighting
-  packages/cli/           `postil` binary: serve | open | mcp | hook <event> | status
-  plugin/                 Claude Code plugin: .claude-plugin/plugin.json, skills/postil/SKILL.md,
-                          .mcp.json, hooks/hooks.json
-  docs/
+  src/git/                git process runner, parsers, Repo (snapshots, pins, diffs)
+  src/db/                 SQLite schema, migrations, Store
+  src/core/               Postil service (all review rules), events, discovery, client
+  src/server/             Hono HTTP API, WebSocket event feed, server lifecycle
+  src/cli/                `postil` binary: serve | status | url | base  (Phase 3 adds mcp, hook)
+  test/                   node:test suites against throwaway repositories
+  web/                    Phase 2: Vite + React UI, built to static files the server serves
+  plugin/                 Phase 3: Claude Code plugin (skill, .mcp.json, hooks)
 ```
 
 ### Server
 
-- Hono on 127.0.0.1, port chosen at start and written to `.postil/server.json` with the auth token and pid. `postil open` and the MCP proxy read that file.
+- Hono on 127.0.0.1. The port is reused from the last run when free, and written to `.git/postil/server.json` (mode 0600) with the token and pid. The token persists across restarts so an open browser tab can reconnect. An exclusive lock file enforces one server per repository and detects locks left by crashed servers.
 - SQLite via `node:sqlite`. Tables: `snapshot`, `review`, `thread`, `comment`, `file_state`, `section_state`, `ui_state`, `scope`.
 - Git engine shells out to `git` (no libgit dependency): `write-tree` snapshots, `diff-tree` / `diff-index` for file lists, `diff` with `--no-color -U3` parsed into a hunk model, `cat-file` for full-file expansion and blob content at any snapshot.
-- WebSocket `/events` broadcasts: `review.submitted`, `review.completed`, `thread.replied`, `thread.resolved`, `files.changed` (from a chokidar watcher on the working tree, debounced, so the browser shows "file changed by Claude" badges live).
+- WebSocket `/events` has two channels. `?channel=ui` carries everything: `draft.changed`, `review.submitted`, `review.started`, `thread.replied`, `thread.resolved`, `review.completed`, `marks.changed`, `base.changed`, `worktree.changed`. `?channel=agent` carries only `review.submitted`, because every frame Claude receives costs a turn of its context, and it must never be woken by its own edits. On connect, the agent greeting lists reviews already waiting, so a monitor that re-arms after a gap still sees what it missed.
+- Working-tree changes are detected by polling the snapshot tree every 1.5s, only while a browser is connected. The private index keeps this to a stat walk. A filesystem watcher was rejected: recursive inotify on a repo with `node_modules` exhausts watch limits.
 - Working tree changes by Claude during a review do not move your view; they show as badges until you refresh a file or switch scope.
 
 ### Snapshots without commits
@@ -113,7 +117,7 @@ Tree objects are ordinary git objects, so `git diff <tree1> <tree2>` works, and 
 
 | Tool | Purpose |
 |---|---|
-| `postil_pending` | Reviews awaiting Claude, with counts. |
+| `postil_pending` | Reviews awaiting Claude, with counts. Backed by `GET /api/agent/pending`, which exists since Phase 1, as do the routes behind the tools below. |
 | `postil_get_review(review_id)` | Threads in the batch: path, side, range, code context (old and new), comment history, suggestion blocks, "outdated" status. |
 | `postil_get_thread(thread_id)` | One thread with wider context. |
 | `postil_reply(thread_id, body, {needs_decision?})` | Post Claude's reply. Body is markdown. |
@@ -146,14 +150,21 @@ Instructions for Claude: how to arm and re-arm the monitor, how to process a rev
 All three passed. Results and consequences in `docs/PHASE0.md`; code in `spikes/`. Idle wake-up is
 confirmed: a submit fired 50s after a turn ended re-invoked the session with no user input.
 
-### Phase 1: server core
+### Phase 1: server core — DONE 2026-09-23
 
-- CLI skeleton, `postil serve`, `.postil/` layout, server.json discovery, token auth.
-- SQLite schema and migrations.
-- Git engine: scope resolution (base, since-snapshot, commit set), file list, hunk parsing, blob fetch, snapshot creation and pinning.
-- REST: scopes, files, hunks, expand, threads, comments, drafts, reviews, file/section state.
-- WebSocket event bus.
-- Unit tests against a fixture repo built in a temp dir.
+Everything planned, plus the agent-side API that Phase 3 wraps in MCP tools. 72 tests. Design
+changes made during the phase:
+
+- State moved from `.postil/` to `.git/postil/`, so `git clean -fdx` cannot delete a review.
+- The snapshot index persists and is seeded from a copy of the real index, so each snapshot
+  re-hashes only changed files instead of the whole tree.
+- Diffs are addressed by tree and blob ids, not by scope. Trees are immutable, so a view never
+  shifts while Claude edits, and every diff result is cacheable forever.
+- Commit selection is a contiguous range, since non-contiguous commit sets have no single
+  well-defined diff.
+- Comments pin both trees of the diff they were written on, so the original context survives
+  edits, rebases and gc. This is what the Phase 4 old-vs-new view will be built on.
+- The agent event channel is separate from the UI channel, and its greeting lists missed reviews.
 
 ### Phase 2: UI MVP
 

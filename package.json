@@ -1,0 +1,31 @@
+{
+  "name": "postil",
+  "version": "0.1.0",
+  "description": "Local GitHub-style code review for Claude Code diffs, with automatic Claude pickup",
+  "type": "module",
+  "private": true,
+  "license": "UNLICENSED",
+  "engines": {
+    "node": ">=24"
+  },
+  "bin": {
+    "postil": "./src/cli/main.ts"
+  },
+  "scripts": {
+    "postil": "node src/cli/main.ts",
+    "typecheck": "tsc -p .",
+    "test": "node --test --test-reporter=spec 'test/**/*.test.ts'",
+    "check": "npm run typecheck && npm test"
+  },
+  "dependencies": {
+    "@hono/node-server": "^2.1.1",
+    "hono": "^4.13.8",
+    "ws": "^8.21.3",
+    "zod": "^4.6.5"
+  },
+  "devDependencies": {
+    "@types/node": "^24.13.6",
+    "@types/ws": "^8.18.1",
+    "typescript": "^7.0.2"
+  }
+}
