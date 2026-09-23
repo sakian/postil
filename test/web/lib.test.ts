@@ -76,10 +76,19 @@ describe('diff rows from real git hunks', () => {
     if (after?.type === 'expander') assert.deepEqual([after.start, after.end], [13, 26]);
   });
 
-  it('joins hunks when the gap between them is fully revealed', () => {
+  it('shows the whole file when every gap is revealed, keeping a slim header per hunk', () => {
     const rows = buildRows(diff, { revealed: [[1, 40]], newLines });
     assert.equal(rows.filter((r) => r.type === 'expander').length, 0);
     assert.equal(rows.filter((r) => r.type === 'line').length, 42, '40 lines plus the two deletions');
+    assert.deepEqual(rows.filter((r) => r.type === 'hunk').map((r) => r.type === 'hunk' && r.hunk), [0, 1]);
+  });
+
+  it('gives every hunk exactly one header row that carries its index', () => {
+    for (const revealed of [[], [[9, 12]], [[1, 40]]] as Array<Array<[number, number]>>) {
+      const rows = buildRows(diff, { revealed, newLines });
+      const heads = rows.flatMap((r) => (r.type === 'hunk' ? [r.hunk] : r.type === 'expander' && r.hunk !== null ? [r.hunk] : []));
+      assert.deepEqual(heads, [0, 1], JSON.stringify(revealed));
+    }
   });
 
   it('keeps gaps collapsed until the file content has loaded', () => {
@@ -142,7 +151,7 @@ describe('diff rows from synthetic hunks', () => {
 
 describe('selection', () => {
   const line = (key: string, kind: 'context' | 'add' | 'del', oldNo: number | null, newNo: number | null): Row =>
-    ({ type: 'line', key, kind, oldNo, newNo, text: '', noEol: false, expanded: false });
+    ({ type: 'line', key, kind, oldNo, newNo, text: '', noEol: false, expanded: false, hunk: 0 });
   const rows: Row[] = [
     line('a', 'context', 1, 1), line('b', 'del', 2, null), line('c', 'del', 3, null),
     line('d', 'add', null, 2), line('e', 'context', 4, 3),
@@ -187,5 +196,35 @@ describe('file tree', () => {
 
   it('orders files as the tree shows them', () => {
     assert.deepEqual(fileOrder(buildTree(files)).map((f) => f.path), ['docs/PLAN.md', 'src/core/a.ts', 'src/core/b.ts', 'src/web/x/y.tsx', 'README.md']);
+  });
+});
+
+describe('section done', async () => {
+  const { hunkDone, hunkRanges, marksOverlapping } = await import('../../web/src/lib/sections.ts');
+  const hunk = {
+    old_start: 10, old_lines: 3, new_start: 10, new_lines: 4, header: '',
+    lines: [
+      { kind: 'context' as const, old_no: 10, new_no: 10, text: '' },
+      { kind: 'del' as const, old_no: 11, new_no: null, text: '' },
+      { kind: 'add' as const, old_no: null, new_no: 11, text: '' },
+      { kind: 'add' as const, old_no: null, new_no: 12, text: '' },
+      { kind: 'context' as const, old_no: 12, new_no: 13, text: '' },
+    ],
+  };
+  const mark = (side: 'old' | 'new', start: number, end: number, state: 'current' | 'moved' | 'outdated' = 'current') => ({
+    id: Math.random(), path: 'f', from_blob: null, to_blob: null, side, start_line: start, end_line: end, content_hash: '', created_at: '',
+    anchor: { state, path: 'f', start_line: start, end_line: end },
+  });
+
+  it('needs both the added and the removed lines covered', () => {
+    assert.equal(hunkDone(hunk, [mark('new', 10, 13)]), false);
+    assert.equal(hunkDone(hunk, [mark('new', 10, 13), mark('old', 10, 12)]), true);
+  });
+  it('proposes the hunk span on each side', () => {
+    assert.deepEqual(hunkRanges(hunk), [{ side: 'new', start: 10, end: 13 }, { side: 'old', start: 10, end: 12 }]);
+  });
+  it('finds the marks to remove when un-marking', () => {
+    const marks = [mark('new', 11, 11), mark('new', 30, 31), mark('old', 12, 12)];
+    assert.equal(marksOverlapping(hunk, marks).length, 2);
   });
 });

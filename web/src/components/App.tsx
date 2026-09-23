@@ -1,6 +1,7 @@
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { initToken, setToken } from '../api.ts';
 import { subscribe } from '../events.ts';
+import { handleKey, KEYMAP } from '../keyboard.ts';
 import { useStore } from '../store.ts';
 import { DiffPane } from './DiffPane.tsx';
 import { Header } from './Header.tsx';
@@ -8,9 +9,27 @@ import { Icon } from './icons.tsx';
 import { SidePanel } from './Panels.tsx';
 import { Sidebar } from './Sidebar.tsx';
 
-function isTyping(target: EventTarget | null): boolean {
-  const el = target as HTMLElement | null;
-  return !!el && (el.tagName === 'TEXTAREA' || el.tagName === 'INPUT' || el.tagName === 'SELECT' || el.isContentEditable);
+function KeyHelp({ onClose }: { onClose(): void }) {
+  return (
+    <div className="modal-backdrop" onClick={onClose}>
+      <div className="modal" role="dialog" aria-label="Keyboard shortcuts" onClick={(e) => e.stopPropagation()}>
+        <div className="panel-head">
+          <h2>Keyboard shortcuts</h2>
+          <button className="icon-btn" onClick={onClose} title="Close (Esc)"><Icon name="close" /></button>
+        </div>
+        <table className="keymap">
+          <tbody>
+            {KEYMAP.map(([keys, what]) => (
+              <tr key={keys}>
+                <td>{keys.split(' / ').map((k, i) => <span key={k}>{i > 0 && ' / '}<kbd>{k}</kbd></span>)}</td>
+                <td>{what}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
 }
 
 function StaleBanner() {
@@ -68,16 +87,10 @@ export function App() {
     return subscribe(token, (e) => useStore.getState().handleEvent(e), (c) => useStore.getState().setConnected(c));
   }, []);
 
+  const [help, setHelp] = useState(false);
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (isTyping(e.target) || e.metaKey || e.ctrlKey || e.altKey) return;
-      const s = useStore.getState();
-      if (e.key === 's' || e.key === 'S') s.setView(s.view === 'split' ? 'unified' : 'split');
-      else if (e.key === 'Escape') {
-        if (s.composer) s.openComposer(null);
-        else if (s.panel) s.setPanel(null);
-        else s.select(null);
-      }
+      if (handleKey(e, setHelp)) e.preventDefault();
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
@@ -98,6 +111,7 @@ export function App() {
         <SidePanel />
       </div>
       <Toasts />
+      {help && <KeyHelp onClose={() => setHelp(false)} />}
     </div>
   );
 }

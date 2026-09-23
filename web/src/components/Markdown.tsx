@@ -1,4 +1,21 @@
-import { Children, isValidElement, useState, type ReactElement, type ReactNode } from 'react';
+import { Children, isValidElement, useEffect, useState, type ReactElement, type ReactNode } from 'react';
+import { highlight, renderTokens, type Token } from '../highlight/index.tsx';
+
+/** A fenced code block, coloured once its tokens arrive from the worker. */
+function Code({ source, lang }: { source: string; lang: string | undefined }) {
+  const [tokens, setTokens] = useState<Token[][] | null>(null);
+  useEffect(() => {
+    let live = true;
+    if (lang) void highlight(source, lang).then((t) => live && setTokens(t));
+    return () => { live = false; };
+  }, [source, lang]);
+  const lines = source.split('\n');
+  return (
+    <pre className="md-pre" data-lang={lang}>
+      <code>{lines.map((l, i) => <span key={i}>{renderTokens(l, tokens?.[i])}{i < lines.length - 1 ? '\n' : ''}</span>)}</code>
+    </pre>
+  );
+}
 import ReactMarkdown, { type Components } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 
@@ -52,7 +69,7 @@ export function Markdown({ text, suggestionBase, apply }: { text: string; sugges
         const lang = /language-([\w-]+)/.exec(props.className ?? '')?.[1];
         const source = String(props.children ?? '').replace(/\n$/, '');
         if (lang === 'suggestion') return <Suggestion before={suggestionBase} after={source} apply={apply} />;
-        return <pre className="md-pre" data-lang={lang}><code>{source}</code></pre>;
+        return <Code source={source} lang={lang} />;
       }
       return <pre className="md-pre">{children}</pre>;
     },

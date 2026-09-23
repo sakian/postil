@@ -23,6 +23,7 @@ export interface ReviewRow {
   submit_tree: string | null;
   complete_tree: string | null;
   agent_session: string | null;
+  archived_at: string | null;
 }
 
 export interface ThreadRow {
@@ -39,6 +40,7 @@ export interface ThreadRow {
   needs_decision: boolean;
   created_at: string;
   resolved_at: string | null;
+  archived_at: string | null;
 }
 
 export interface CommentRow {

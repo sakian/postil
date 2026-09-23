@@ -110,6 +110,7 @@ export function Header() {
       <button className={`btn btn-primary${panel === 'review' ? ' active' : ''}`} onClick={() => setPanel(panel === 'review' ? null : 'review')}>
         Finish review{pending > 0 && <span className="count">{pending}</span>}
       </button>
+      <button className="icon-btn help-btn" title="Keyboard shortcuts (?)" onClick={() => window.dispatchEvent(new KeyboardEvent('keydown', { key: '?' }))}>?</button>
       <span className={`conn ${connected ? 'on' : 'off'}`} title={connected ? 'Live updates connected' : 'Reconnecting to the postil server…'} />
     </header>
   );

@@ -73,7 +73,7 @@ const schemas = {
   sectionMark: z.object({
     path: z.string().min(1), from_blob: oid.nullable(), to_blob: oid.nullable(), side, start_line: line, end_line: line,
   }),
-  sectionFilter: z.object({ path: z.string().optional() }),
+  sectionFilter: z.object({ path: z.string().optional(), from: oid.optional(), to: oid.optional() }),
 };
 
 async function json<T extends z.ZodType>(c: Context, schema: T): Promise<z.infer<T>> {
@@ -200,6 +200,9 @@ export function createApp(postil: Postil, opts: AppOptions): Hono {
 
   // -------------------------------------------------------------- reviews
   app.get('/api/reviews', (c) => c.json({ reviews: postil.reviews() }));
+  app.post('/api/archive', async (c) => c.json(await postil.archiveResolved()));
+  app.get('/api/archive/threads', (c) => c.json({ threads: postil.archivedThreads() }));
+  app.post('/api/prune', async (c) => c.json(await postil.prune()));
   app.get('/api/reviews/draft', (c) => c.json({ draft: postil.draft() }));
   app.put('/api/reviews/draft', async (c) => c.json(postil.setDraftBody((await json(c, schemas.body)).body)));
   app.post('/api/reviews/submit', async (c) => c.json(await postil.submitReview((await json(c, schemas.optionalBody)).body), 201));
@@ -212,7 +215,11 @@ export function createApp(postil: Postil, opts: AppOptions): Hono {
     postil.setFileMark(b.path, b.blob, b.viewed);
     return c.json({ ok: true });
   });
-  app.get('/api/marks/sections', (c) => c.json({ marks: postil.sectionMarks(query(c, schemas.sectionFilter).path) }));
+  app.get('/api/marks/sections', async (c) => {
+    const q = query(c, schemas.sectionFilter);
+    if (q.from && q.to) return c.json({ marks: await postil.sectionMarksIn({ from_tree: q.from, to_tree: q.to }) });
+    return c.json({ marks: postil.sectionMarks(q.path) });
+  });
   app.post('/api/marks/sections', async (c) => c.json(await postil.addSectionMark(await json(c, schemas.sectionMark)), 201));
   app.delete('/api/marks/sections/:id', (c) => {
     postil.removeSectionMark(param(c, 'id'));

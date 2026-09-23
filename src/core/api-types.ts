@@ -194,3 +194,6 @@ export interface ListenResult {
   /** Reviews waiting for Claude right now. */
   pending: number[];
 }
+
+/** A "done" mark with its place in the diff being viewed. Valid while its state is current or moved. */
+export type AnchoredSectionMark = import('../db/types.ts').SectionMarkRow & { anchor: Anchor };

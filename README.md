@@ -52,7 +52,10 @@ Other commands: `postil status`, `postil open`, `postil stop`, and `postil help`
 - **Phase 4 — scope and history: done.** Comments follow their code as it moves, outdated ones
   show what changed, suggestions apply with one click (or by Claude), files updated since your
   last review are marked, and any range of commits can be reviewed.
-- **Phase 5 — polish: next.**
+- **Phase 5 — polish: done.** Mark sections done (they stay done through edits elsewhere),
+  keyboard shortcuts (press `?`), syntax highlighting, smooth scrolling through hundreds of
+  files, and archiving of finished conversations.
+- **Phase 6 — hardening: next.**
 
 ## Development
 
@@ -71,6 +74,9 @@ UI development with hot reload, against a running server:
 ```sh
 POSTIL_URL=http://127.0.0.1:<port> npm run dev:web
 ```
+
+`node e2e/perf.ts` loads and scrolls a 300-file synthetic review and reports load time and
+main-thread blocking.
 
 Live tests run real Claude Code sessions with the plugin. They cost money and depend on the
 model, so they are run by hand: `node e2e/live/headless.ts` and `node e2e/live/interactive.ts`.

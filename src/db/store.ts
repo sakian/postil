@@ -147,7 +147,7 @@ export class Store {
   }
 
   listReviews(statuses?: readonly ReviewStatus[]): ReviewRow[] {
-    if (!statuses) return this.all('SELECT * FROM review ORDER BY id') as unknown as ReviewRow[];
+    if (!statuses) return this.all('SELECT * FROM review WHERE archived_at IS NULL ORDER BY id') as unknown as ReviewRow[];
     const params: Params = {};
     const names = statuses.map((s, i) => {
       params[`s${i}`] = s;
@@ -212,9 +212,9 @@ export class Store {
     return r ? toThread(r) : null;
   }
 
-  /** Threads visible in the UI: those with a published comment, plus threads whose only comments are drafts. */
-  listThreads(filter: { status?: ThreadStatus; path?: string } = {}): ThreadRow[] {
-    const where: string[] = [];
+  /** Threads, excluding archived ones unless asked for them. */
+  listThreads(filter: { status?: ThreadStatus; path?: string; archived?: boolean } = {}): ThreadRow[] {
+    const where: string[] = [filter.archived ? 'archived_at IS NOT NULL' : 'archived_at IS NULL'];
     const params: Params = {};
     if (filter.status) {
       where.push('status = :status');
@@ -357,6 +357,51 @@ export class Store {
         ? this.all('SELECT * FROM section_mark WHERE path = :path ORDER BY start_line', { path })
         : this.all('SELECT * FROM section_mark ORDER BY path, start_line')
     ) as unknown as SectionMarkRow[];
+  }
+
+  // ------------------------------------------------------------------ archive
+
+  /**
+   * Archive resolved threads, then addressed reviews all of whose threads are archived.
+   * Returns how many of each were archived.
+   */
+  archiveResolved(): { threads: number; reviews: number } {
+    return this.tx(() => {
+      const now = nowIso();
+      const threads = this.run("UPDATE thread SET archived_at = :now WHERE status = 'resolved' AND archived_at IS NULL", { now }).changes;
+      const reviews = this.run(
+        `UPDATE review SET archived_at = :now
+         WHERE status = 'addressed' AND archived_at IS NULL
+           AND NOT EXISTS (
+             SELECT 1 FROM comment c JOIN thread t ON t.id = c.thread_id
+             WHERE c.review_id = review.id AND t.archived_at IS NULL
+           )`,
+        { now },
+      ).changes;
+      return { threads, reviews };
+    });
+  }
+
+  /** Trees still needed: by live threads, live reviews, and the latest review (for "since last review"). */
+  treesInUse(): Set<string> {
+    const rows = this.all(
+      `SELECT from_tree AS t FROM thread WHERE archived_at IS NULL
+       UNION SELECT to_tree FROM thread WHERE archived_at IS NULL
+       UNION SELECT submit_tree FROM review WHERE archived_at IS NULL AND submit_tree IS NOT NULL
+       UNION SELECT complete_tree FROM review WHERE archived_at IS NULL AND complete_tree IS NOT NULL
+       UNION SELECT submit_tree FROM (SELECT submit_tree FROM review WHERE submit_tree IS NOT NULL ORDER BY submitted_at DESC, id DESC LIMIT 1)`,
+    );
+    return new Set(rows.map((r) => r.t as string));
+  }
+
+  /** Blobs that section marks refer to. */
+  blobsInUse(): Set<string> {
+    const rows = this.all(`SELECT from_blob AS b FROM section_mark WHERE from_blob IS NOT NULL UNION SELECT to_blob FROM section_mark WHERE to_blob IS NOT NULL`);
+    return new Set(rows.map((r) => r.b as string));
+  }
+
+  deleteSnapshot(tree: string): void {
+    this.run('DELETE FROM snapshot WHERE tree = :tree', { tree });
   }
 
   // ------------------------------------------------------------------ listeners

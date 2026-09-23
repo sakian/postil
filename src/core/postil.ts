@@ -2,7 +2,8 @@ import { createHash } from 'node:crypto';
 import { lstat, readFile, rename, writeFile } from 'node:fs/promises';
 import { join, resolve, sep } from 'node:path';
 import { Store } from '../db/store.ts';
-import type { CommentRow, ReviewRow, Side, ThreadRow } from '../db/types.ts';
+import type { CommentRow, ReviewRow, SectionMarkRow, Side, ThreadRow } from '../db/types.ts';
+import { GitError } from '../git/exec.ts';
 import { splitLines } from '../git/parse.ts';
 import { assertOid, Repo } from '../git/repo.ts';
 import type { FileChange, Hunk } from '../git/types.ts';
@@ -306,32 +307,53 @@ export class Postil {
 
   /** Where a thread's lines are in the given diff: on its new side for new-side threads, old side otherwise. */
   async anchorFor(thread: ThreadRow, target: { from_tree: string; to_tree: string }): Promise<Anchor> {
-    const tree = thread.side === 'new' ? target.to_tree : target.from_tree;
-    const origin = thread.side === 'new' ? thread.to_tree : thread.from_tree;
-    let path = thread.path;
+    return this.anchorRange(
+      {
+        path: thread.path, side: thread.side, blob: thread.blob, start: thread.start_line, end: thread.end_line,
+        origin: thread.side === 'new' ? thread.to_tree : thread.from_tree,
+      },
+      target,
+    );
+  }
+
+  /**
+   * Where a line range of one version of a file is in a diff. `origin` is a tree containing that
+   * version, used to follow renames; without it a renamed file counts as gone.
+   */
+  async anchorRange(
+    r: { path: string; side: Side; blob: string; start: number | null; end: number | null; origin?: string },
+    target: { from_tree: string; to_tree: string },
+  ): Promise<Anchor> {
+    const tree = r.side === 'new' ? target.to_tree : target.from_tree;
+    let path = r.path;
     let entry = await this.repo.entryAt(tree, path);
-    if (!entry) {
-      const renamed = await this.renamedTo(origin, tree, path);
+    if (!entry && r.origin) {
+      const renamed = await this.renamedTo(r.origin, tree, path);
       if (renamed) {
         path = renamed;
         entry = await this.repo.entryAt(tree, path);
       }
     }
     if (!entry || entry.type !== 'blob') return { state: 'gone', path, start_line: null, end_line: null };
-    const start = thread.start_line;
-    const end = thread.end_line;
+    const { start, end } = r;
     if (start === null || end === null) return { state: 'current', path, start_line: null, end_line: null };
-    if (entry.oid === thread.blob) return { state: 'current', path, start_line: start, end_line: end };
+    if (entry.oid === r.blob) return { state: 'current', path, start_line: start, end_line: end };
 
-    const info = await this.repo.blobInfo(entry.oid);
-    if (info.binary) return { state: 'gone', path, start_line: null, end_line: null };
-    const r = reanchor(await this.zeroContextHunks(thread.blob, entry.oid), start, end, info.lines);
-    if (r.state === 'gone') return { state: 'gone', path, start_line: null, end_line: null };
-    const anchor: Anchor = { state: r.state, path, start_line: r.start, end_line: r.end };
-    if (r.state === 'outdated') {
-      anchor.current_text = splitLines(await this.repo.readBlob(entry.oid)).slice(r.start - 1, r.end).join('\n');
+    try {
+      const info = await this.repo.blobInfo(entry.oid);
+      if (info.binary) return { state: 'gone', path, start_line: null, end_line: null };
+      const mapped = reanchor(await this.zeroContextHunks(r.blob, entry.oid), start, end, info.lines);
+      if (mapped.state === 'gone') return { state: 'gone', path, start_line: null, end_line: null };
+      const anchor: Anchor = { state: mapped.state, path, start_line: mapped.start, end_line: mapped.end };
+      if (mapped.state === 'outdated') {
+        anchor.current_text = splitLines(await this.repo.readBlob(entry.oid)).slice(mapped.start - 1, mapped.end).join('\n');
+      }
+      return anchor;
+    } catch (e) {
+      // The original blob can be missing once an archived comment's snapshot has been pruned.
+      if ((e instanceof HttpError && e.status === 404) || e instanceof GitError) return { state: 'gone', path, start_line: null, end_line: null };
+      throw e;
     }
-    return anchor;
   }
 
   /** Threads with their anchors in a diff, for placing them in the UI. */
@@ -803,6 +825,21 @@ export class Postil {
     return this.store.listSectionMarks(path);
   }
 
+  /** Section marks with where each one is in a diff: a mark holds only while its lines are unchanged. */
+  async sectionMarksIn(target: { from_tree: string; to_tree: string }): Promise<Array<SectionMarkRow & { anchor: Anchor }>> {
+    assertOid(target.from_tree, 'tree id');
+    assertOid(target.to_tree, 'tree id');
+    return Promise.all(
+      this.store.listSectionMarks().map(async (m) => {
+        const blob = m.side === 'new' ? m.to_blob : m.from_blob;
+        const anchor: Anchor = blob
+          ? await this.anchorRange({ path: m.path, side: m.side, blob, start: m.start_line, end: m.end_line }, target)
+          : { state: 'gone', path: m.path, start_line: null, end_line: null };
+        return { ...m, anchor };
+      }),
+    );
+  }
+
   async addSectionMark(input: {
     path: string; from_blob: string | null; to_blob: string | null; side: Side; start_line: number; end_line: number;
   }) {
@@ -815,6 +852,7 @@ export class Postil {
       throw new HttpError(422, `lines ${input.start_line}-${input.end_line} are outside the file (${range.total} lines)`, 'invalid_range');
     }
     const contentHash = createHash('sha256').update(range.lines.join('\n')).digest('hex');
+    await this.repo.pinBlob(blob); // the mark must outlive gc to keep being re-anchored
     const mark = this.store.addSectionMark({ ...input, content_hash: contentHash });
     this.bus.emit({ type: 'marks.changed' });
     return mark;
@@ -823,6 +861,42 @@ export class Postil {
   removeSectionMark(id: number): void {
     if (!this.store.removeSectionMark(id)) throw new HttpError(404, `no section mark ${id}`, 'unknown_mark');
     this.bus.emit({ type: 'marks.changed' });
+  }
+
+  // ------------------------------------------------------------------ archive and prune
+
+  /** Archive resolved conversations and finished reviews, then release what they pinned. */
+  async archiveResolved(): Promise<{ threads: number; reviews: number; unpinned: number }> {
+    const archived = this.store.archiveResolved();
+    const { unpinned } = await this.prune();
+    this.bus.emit({ type: 'archive.changed' });
+    return { ...archived, unpinned };
+  }
+
+  /**
+   * Unpin snapshot trees and blobs nothing live refers to, so `git gc` can reclaim them. Only
+   * pins under refs/postil/ are touched.
+   */
+  async prune(): Promise<{ unpinned: number }> {
+    const trees = this.store.treesInUse();
+    const blobs = this.store.blobsInUse();
+    let unpinned = 0;
+    for (const tree of await this.repo.pinnedTrees()) {
+      if (trees.has(tree)) continue;
+      await this.repo.unpin(tree);
+      this.store.deleteSnapshot(tree);
+      unpinned++;
+    }
+    for (const blob of await this.repo.pinnedBlobs()) {
+      if (blobs.has(blob)) continue;
+      await this.repo.unpinBlob(blob);
+      unpinned++;
+    }
+    return { unpinned };
+  }
+
+  archivedThreads(): ThreadView[] {
+    return this.threadViews(this.store.listThreads({ archived: true }), { includeDrafts: false });
   }
 
   // ------------------------------------------------------------------ ui state

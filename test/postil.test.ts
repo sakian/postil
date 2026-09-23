@@ -642,3 +642,75 @@ describe('applying suggestions', () => {
     }
   });
 });
+
+describe('section marks across edits', () => {
+  it('keep holding when other parts of the file change, and lapse when their own lines do', async () => {
+    const fx = makeFixture();
+    try {
+      fx.write('big.txt', numbered(60));
+      fx.commit('base');
+      const postil = await Postil.open(fx.dir);
+      fx.write('big.txt', numbered(60, { 10: 'ten', 40: 'forty' }));
+      const s1 = await postil.resolveScope({ kind: 'all' });
+      const f = (await postil.files(s1.from.tree, s1.to.tree))[0]!;
+      const early = await postil.addSectionMark({ path: 'big.txt', from_blob: f.old_blob, to_blob: f.new_blob, side: 'new', start_line: 7, end_line: 13 });
+      const late = await postil.addSectionMark({ path: 'big.txt', from_blob: f.old_blob, to_blob: f.new_blob, side: 'new', start_line: 37, end_line: 43 });
+
+      // Claude inserts a header and rewrites the second section.
+      fx.write('big.txt', `// header\n${numbered(60, { 10: 'ten', 40: 'FORTY, rewritten' })}`);
+      const s2 = await postil.resolveScope({ kind: 'all' });
+      const marks = await postil.sectionMarksIn({ from_tree: s2.from.tree, to_tree: s2.to.tree });
+      const state = (id: number) => marks.find((m) => m.id === id)!.anchor;
+      assert.deepEqual([state(early.id).state, state(early.id).start_line], ['moved', 8]);
+      assert.equal(state(late.id).state, 'outdated');
+      postil.close();
+    } finally {
+      fx.cleanup();
+    }
+  });
+});
+
+describe('archiving and pruning', () => {
+  it('archives resolved threads and finished reviews, and releases only what nothing live needs', async () => {
+    const fx = makeFixture();
+    try {
+      fx.write('f.txt', numbered(10));
+      fx.commit('base');
+      const postil = await Postil.open(fx.dir);
+      fx.write('f.txt', numbered(10, { 2: 'two' }));
+      let s = await postil.resolveScope({ kind: 'all' });
+      const done = await postil.createThread({ from_tree: s.from.tree, to_tree: s.to.tree, path: 'f.txt', side: 'new', start_line: 2, body: 'a' });
+      const r1 = await postil.submitReview();
+      fx.write('f.txt', numbered(10, { 2: 'TWO' })); // Claude's fix: the completion snapshot is a new tree
+      await postil.agentReply(done.id, 'fixed');
+      const completed = await postil.completeReview(r1.id, 'ok');
+      postil.resolveThread(done.id);
+
+      fx.write('f.txt', numbered(10, { 2: 'TWO', 8: 'eight' }));
+      s = await postil.resolveScope({ kind: 'all' });
+      const open = await postil.createThread({ from_tree: s.from.tree, to_tree: s.to.tree, path: 'f.txt', side: 'new', start_line: 8, body: 'b' });
+      const f = (await postil.files(s.from.tree, s.to.tree))[0]!;
+      await postil.addSectionMark({ path: 'f.txt', from_blob: f.old_blob, to_blob: f.new_blob, side: 'new', start_line: 1, end_line: 3 });
+      const before = await postil.repo.pinnedTrees();
+
+      const r = await postil.archiveResolved();
+      assert.deepEqual([r.threads, r.reviews], [1, 1]);
+      assert.deepEqual(postil.threads().map((t) => t.id), [open.id], 'archived threads leave the normal view');
+      assert.deepEqual(postil.archivedThreads().map((t) => t.id), [done.id]);
+      assert.equal(postil.reviews().some((x) => x.id === r1.id), false);
+
+      const after = await postil.repo.pinnedTrees();
+      assert.equal(after.includes(completed.complete_tree!), false, 'the archived review\'s completion snapshot is released');
+      assert.ok(after.length < before.length);
+      for (const needed of [open.from_tree, open.to_tree, r1.submit_tree!]) assert.ok(after.includes(needed), 'live and latest-review trees stay pinned');
+      assert.deepEqual(await postil.repo.pinnedBlobs(), [f.new_blob], 'the section mark keeps its blob');
+
+      fx.git('gc', '--prune=now', '-q');
+      const s2 = await postil.resolveScope({ kind: 'all' });
+      assert.equal((await postil.threadsIn({ from_tree: s2.from.tree, to_tree: s2.to.tree }))[0]?.anchor?.state, 'current');
+      postil.close();
+    } finally {
+      fx.cleanup();
+    }
+  });
+});

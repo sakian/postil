@@ -21,6 +21,7 @@ Commands:
   open                     Open the review UI in your browser
   url [--agent]            Print the browser URL, or Claude's event feed URL
   base [<rev> | --reset]   Show the base that "all changes" is measured from, or change it
+  archive                  Archive resolved conversations and finished reviews, and release their snapshots
   link [--dir <d>] [--force]
                            Put \`postil\` on your PATH (default ~/.local/bin) for the Claude Code plugin
   mcp                      Run the MCP server the Claude Code plugin uses (stdio)
@@ -121,6 +122,12 @@ async function main(argv: string[]): Promise<number> {
     }
     case 'base':
       return base(cwd, rest[0], values.reset ?? false);
+    case 'archive': {
+      const client = await PostilClient.connect(cwd);
+      const r = await client.request<{ threads: number; reviews: number; unpinned: number }>('POST', '/api/archive');
+      console.log(`archived ${r.threads} conversation(s) and ${r.reviews} review(s); released ${r.unpinned} snapshot(s)`);
+      return 0;
+    }
     default:
       throw new UsageError(`unknown command: ${command}`);
   }

@@ -258,11 +258,33 @@ Verified with real Claude sessions (`e2e/live/`, run by hand since they cost mon
 Verified by service tests for each anchor state (including renames and deletions), 19 browser
 tests, and a live run in which Claude applied a suggestion with the tool and replied.
 
-### Phase 5: polish
+### Phase 5: polish — DONE 2026-09-23
 
-- Section done, collapse-all, expand-all, keyboard map, syntax highlighting, virtualised lists.
-- `postil status` and `postil open`.
-- Archive a finished review, prune snapshot refs.
+- **Sections done.** Every hunk has a Done toggle; a done hunk folds to one line ("Reviewed · N
+  changed lines · Show") with its conversations still visible, and the file header counts
+  sections done. Marks are re-anchored like comments, so a section stays done while Claude edits
+  elsewhere in the file and lapses only when its own lines change. Marking the last section marks
+  the file viewed. Each mark pins its file version so `git gc` cannot drop it.
+- **Keyboard map**, with a `?` overlay: j/k files, n/p conversations, d section done, v viewed,
+  f fold, e/E expand/collapse, s layout, c conversations, r finish review, Esc.
+- **Syntax highlighting** with Shiki in a Web Worker (a 3,000-line file takes over a second to
+  tokenize), using its JavaScript regex engine so the content security policy needs no WebAssembly
+  exception. Each of 242 grammars is its own chunk, loaded on first use. Whole files are tokenized
+  so multi-line strings and comments colour correctly; files over 5,000 lines stay plain. Fenced
+  code in comments is highlighted too.
+- **Large reviews.** Off-screen file bodies skip layout and paint (`content-visibility`), which keeps
+  their state, such as a half-written comment, unlike unmounting. Diffs over 1,500 changed lines
+  wait behind "Load diff". Measured with `e2e/perf.ts` on 301 files: first diff in about 1s, no
+  main-thread blocking while scrolling through everything. Without `content-visibility`, the same
+  scroll blocked the main thread for 4.2 seconds in total.
+- **Archive and prune.** "Archive resolved" (or `postil archive`) hides resolved conversations and
+  finished reviews, and unpins the snapshots nothing live still needs, so `git gc` can reclaim
+  them. Archived conversations stay listed under an Archived filter.
+
+Bug found by the browser tests: a file that changed and was already on screen after a refresh
+could stay on "Loading diff" forever, because lazy loading waited on an intersection observer
+whose root was the viewport, not the scrolling pane. Fixed by observing the pane and checking a
+newly mounted file's position directly.
 
 ### Phase 6: hardening
 

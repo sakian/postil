@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { api } from '../api.ts';
 import type { ThreadView } from '../../../src/core/api-types.ts';
 import { isOutdated, lineLabel, placement, relativeTime, snippet, threadFile, threadPath } from '../format.ts';
 import { useStore } from '../store.ts';
@@ -6,7 +7,7 @@ import { Icon } from './icons.tsx';
 import { Markdown } from './Markdown.tsx';
 import { StatusChips, ThreadWidget } from './Thread.tsx';
 
-type Filter = 'yours' | 'claude' | 'pending' | 'open' | 'outdated' | 'resolved' | 'all';
+type Filter = 'yours' | 'claude' | 'pending' | 'open' | 'outdated' | 'resolved' | 'all' | 'archived';
 
 const FILTERS: Array<[Filter, string, (t: ThreadView) => boolean]> = [
   ['yours', 'Your turn', (t) => t.status === 'open' && t.awaiting === 'user'],
@@ -25,8 +26,14 @@ function ThreadsPanel() {
   const [expanded, setExpanded] = useState<number | null>(null);
   const { focus } = useStore.getState();
 
+  const [archived, setArchived] = useState<ThreadView[] | null>(null);
+  const { archiveResolved } = useStore.getState();
+  useEffect(() => {
+    if (filter === 'archived') void api.archivedThreads().then((r) => setArchived(r.threads), () => setArchived([]));
+  }, [filter, threads]);
+
   const counts = useMemo(() => Object.fromEntries(FILTERS.map(([k, , fn]) => [k, threads.filter(fn).length])), [threads]);
-  const shown = threads.filter(FILTERS.find(([k]) => k === filter)![2]);
+  const shown = filter === 'archived' ? (archived ?? []) : threads.filter(FILTERS.find(([k]) => k === filter)![2]);
 
   return (
     <>
@@ -36,7 +43,14 @@ function ThreadsPanel() {
             {label} <span className="muted">{counts[key]}</span>
           </button>
         ))}
+        <button className={filter === 'archived' ? 'active' : ''} onClick={() => setFilter('archived')}>Archived</button>
       </div>
+      {filter === 'resolved' && (counts.resolved ?? 0) > 0 && (
+        <div className="panel-note">
+          <button className="btn btn-small" onClick={() => void archiveResolved()}>Archive resolved ({counts.resolved})</button>
+          <span className="muted">Hides them and the finished reviews, and lets git reclaim their snapshots.</span>
+        </div>
+      )}
       <div className="panel-list">
         {shown.length === 0 && <div className="empty muted">No conversations here.</div>}
         {shown.map((t) => {

@@ -1,5 +1,5 @@
 import type {
-  AppliedSuggestion, BaseInfo, CommitsInfo, FileDiff, FileMarkRow, Health, NewThreadInput, ResolvedDiff, ReviewView, Scope, ThreadView,
+  AnchoredSectionMark, AppliedSuggestion, SectionMarkRow, Side, BaseInfo, CommitsInfo, FileDiff, FileMarkRow, Health, NewThreadInput, ResolvedDiff, ReviewView, Scope, ThreadView,
 } from '../../src/core/api-types.ts';
 
 const TOKEN_KEY = 'postil.token';
@@ -86,12 +86,20 @@ export const api = {
   deleteComment: (id: number) => call<{ thread_deleted: boolean }>('DELETE', `/api/comments/${id}`),
 
   reviews: () => call<{ reviews: ReviewView[] }>('GET', '/api/reviews'),
+  archive: () => call<{ threads: number; reviews: number; unpinned: number }>('POST', '/api/archive'),
+  archivedThreads: () => call<{ threads: ThreadView[] }>('GET', '/api/archive/threads'),
   draft: () => call<{ draft: ReviewView | null }>('GET', '/api/reviews/draft'),
   setDraftBody: (body: string) => call<ReviewView>('PUT', '/api/reviews/draft', { body }),
   submit: (body?: string) => call<ReviewView>('POST', '/api/reviews/submit', body === undefined ? {} : { body }),
 
   fileMarks: () => call<{ marks: FileMarkRow[] }>('GET', '/api/marks/files'),
   setFileMark: (path: string, blob: string, viewed: boolean) => call<{ ok: true }>('PUT', '/api/marks/files', { path, blob, viewed }),
+
+  sectionMarks: (trees: { from: string; to: string }) =>
+    call<{ marks: AnchoredSectionMark[] }>('GET', `/api/marks/sections?${q({ from: trees.from, to: trees.to })}`),
+  addSectionMark: (m: { path: string; from_blob: string | null; to_blob: string | null; side: Side; start_line: number; end_line: number }) =>
+    call<SectionMarkRow>('POST', '/api/marks/sections', m),
+  removeSectionMark: (id: number) => call<{ ok: true }>('DELETE', `/api/marks/sections/${id}`),
 
   uiState: <T>(key: string) => call<{ value: T | null }>('GET', `/api/ui-state/${encodeURIComponent(key)}`),
   setUiState: (key: string, value: unknown) => call<{ ok: true }>('PUT', `/api/ui-state/${encodeURIComponent(key)}`, { value }),

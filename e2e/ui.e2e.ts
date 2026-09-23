@@ -62,6 +62,7 @@ describe('postil UI', { timeout: 120_000 }, () => {
     }
     page = await browser.newPage({ viewport: { width: 1400, height: 900 } });
     page.on('pageerror', (e) => pageErrors.push(String(e)));
+    page.on('requestfailed', (r) => pageErrors.push(`request failed: ${r.url()} ${r.failure()?.errorText}`));
     page.on('console', (m) => m.type() === 'error' && pageErrors.push(m.text()));
   });
 
@@ -323,6 +324,97 @@ describe('postil UI', { timeout: 120_000 }, () => {
     await until(async () => (await page.locator('section.file').count()) === 2, 'both commits');
     assert.match(await page.locator('.scope-picker select').inputValue(), /commits/);
     await page.locator('.scope-picker select').selectOption('all');
+  });
+
+  it('marks sections done, folds them, and keeps them done through edits elsewhere', async () => {
+    await page.locator('body').click({ position: { x: 5, y: 5 } });
+    if (await page.locator('table.diff-split').count()) await page.keyboard.press('s'); // back to unified
+    const retry = file('src/retry.ts');
+    await retry.scrollIntoViewIfNeeded();
+    await retry.locator('.done-toggle').first().waitFor();
+    const sections = await retry.locator('.done-toggle').count();
+    assert.ok(sections >= 3, `retry.ts has ${sections} sections`);
+
+    await retry.locator('.done-toggle').first().click();
+    await retry.locator('.done-row').first().waitFor();
+    assert.match(await retry.locator('.chip-sections').innerText(), new RegExp(`1/${sections} sections done`));
+    await shot('14-section-done');
+
+    await retry.locator('.done-row').getByRole('button', { name: 'Show' }).click();
+    await until(async () => (await retry.locator('.done-row').count()) === 0, 'the section to unfold');
+    await retry.getByRole('button', { name: 'Fold' }).first().click();
+    await retry.locator('.done-row').first().waitFor();
+
+    // Claude edits the end of the file: the first section is untouched and stays done.
+    fx.write('src/retry.ts', readFileSync(join(fx.dir, 'src/retry.ts'), 'utf8') + 'export const EXTRA = 1;\n');
+    await page.locator('.banner', { hasText: 'Files changed on disk' }).waitFor();
+    await page.locator('.banner').getByRole('button', { name: 'Refresh' }).click();
+    await until(async () => (await page.locator('.banner').count()) === 0, 'the refresh to finish');
+    await until(async () => /1\/\d+ sections done/.test(await retry.locator('.chip-sections').innerText().catch(() => '')), 'the mark to survive the edit');
+    assert.equal(await retry.locator('.done-row').count(), 1);
+
+    // Finishing the last section finishes the file.
+    const viewedBefore = await page.locator('.tree-file.is-viewed').count();
+    for (let left = await retry.locator('.done-toggle:not(.on)').count(); left > 0; left--) {
+      await retry.locator('.done-toggle:not(.on)').first().click();
+      // Wait for this mark to land (or for the file to fold, after the last one) before the next.
+      await until(async () => (await retry.locator('.done-toggle:not(.on)').count()) < left, 'the section to be marked');
+    }
+    await until(async () => (await page.locator('.tree-file.is-viewed').count()) === viewedBefore + 1, 'retry.ts to be marked viewed');
+  });
+
+  it('colours code by language', async () => {
+    const db = file('src/db.ts');
+    await db.scrollIntoViewIfNeeded();
+    await until(async () => (await db.locator('.tk').count()) > 0, 'syntax colours in db.ts');
+    const colour = await db.locator('.tk').first().evaluate((el) => getComputedStyle(el).color);
+    assert.notEqual(colour, '', 'tokens carry a colour');
+  });
+
+  it('holds back a huge diff until asked', async () => {
+    fx.write('src/generated.ts', Array.from({ length: 1600 }, (_, i) => `export const g${i} = ${i};`).join('\n') + '\n');
+    await page.locator('.banner', { hasText: 'Files changed on disk' }).waitFor();
+    await page.locator('.banner').getByRole('button', { name: 'Refresh' }).click();
+    const big = file('src/generated.ts');
+    await big.scrollIntoViewIfNeeded();
+    await big.getByText(/Large diff: 1,600 changed lines/).waitFor();
+    assert.equal(await big.locator('table.diff').count(), 0);
+    await big.getByRole('button', { name: 'Load diff' }).click();
+    await big.locator('table.diff').waitFor();
+  });
+
+  it('answers the keyboard', async () => {
+    await page.locator('body').click({ position: { x: 5, y: 5 } });
+    await page.evaluate(() => document.querySelector('main.main')!.scrollTo(0, 0));
+    const currentIndex = () =>
+      page.evaluate(() => {
+        const top = document.querySelector('main.main')!.getBoundingClientRect().top + 40;
+        return [...document.querySelectorAll('section.file')].findIndex((f) => f.getBoundingClientRect().bottom > top);
+      });
+    const start = await currentIndex();
+    await page.keyboard.press('j');
+    await until(async () => (await currentIndex()) === start + 1, 'j to move to the next file');
+    await page.keyboard.press('k');
+    await until(async () => (await currentIndex()) === start, 'k to move back');
+    await page.keyboard.press('?');
+    await page.getByRole('dialog', { name: 'Keyboard shortcuts' }).waitFor();
+    await shot('15-keyboard-help');
+    await page.keyboard.press('Escape');
+    await until(async () => (await page.getByRole('dialog', { name: 'Keyboard shortcuts' }).count()) === 0, 'help to close');
+  });
+
+  it('archives resolved conversations, keeping them findable', async () => {
+    await page.getByRole('button', { name: /Conversations/ }).click();
+    const panel = page.locator('.side-panel');
+    await panel.locator('.panel-filters').getByRole('button', { name: /^Resolved/ }).click();
+    const archive = panel.getByRole('button', { name: /Archive resolved/ });
+    await archive.waitFor();
+    await archive.click();
+    await page.locator('.toast', { hasText: /Archived 1 conversation/ }).waitFor();
+    await until(async () => (await panel.locator('.panel-item').count()) === 0, 'resolved list to empty');
+    await panel.locator('.panel-filters').getByRole('button', { name: 'Archived' }).click();
+    await until(async () => (await panel.locator('.panel-item').count()) === 1, 'the archived conversation to be listed');
+    await page.keyboard.press('Escape');
   });
 
   it('explains what to do when opened without a token', async () => {

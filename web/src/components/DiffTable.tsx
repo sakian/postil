@@ -1,9 +1,11 @@
 import { Fragment, useCallback, useEffect, useMemo, useRef, type MouseEvent, type ReactNode } from 'react';
-import type { FileChange, FileDiff, Side, ThreadView } from '../../../src/core/api-types.ts';
+import type { FileChange, FileDiff, Hunk, Side, ThreadView } from '../../../src/core/api-types.ts';
 import { normalize, type Range } from '../lib/ranges.ts';
-import { buildRows, EXPAND_STEP, gaps, oldToNewInGaps, toSplit, type Row, type SplitRow } from '../lib/rows.ts';
+import { buildRows, EXPAND_STEP, foldDone, gaps, oldToNewInGaps, toSplit, type Row, type SplitRow } from '../lib/rows.ts';
+import { hunkDone, validMarks } from '../lib/sections.ts';
 import { isSelected, splitSelection, unifiedSelection, type Selection } from '../lib/selection.ts';
-import { currentLines } from '../format.ts';
+import { currentLines, diffKey } from '../format.ts';
+import { renderTokens, type Token } from '../highlight/index.tsx';
 import { useStore, type Target } from '../store.ts';
 import { Icon } from './icons.tsx';
 import { NewThreadComposer, ThreadWidget } from './Thread.tsx';
@@ -26,9 +28,33 @@ export function DiffTable({ file, diff, threads }: Props) {
   const linesState = useStore((s) => (blob ? s.lines[blob] : undefined));
   const selection = useStore((s) => (s.selection?.path === file.path ? s.selection : null));
   const composer = useStore((s) => (s.composer?.path === file.path ? s.composer : null));
-  const { expand, collapse, select, openComposer, loadLines } = useStore.getState();
+  const sections = useStore((s) => s.sections);
+  const unfoldedDone = useStore((s) => s.unfoldedDone);
+  const { expand, collapse, select, openComposer, loadLines, setHunkDone, setDoneUnfolded } = useStore.getState();
+  const key = diffKey(file);
+
+  // Hunks marked done fold to one line unless the user unfolded them this session.
+  const marks = useMemo(() => validMarks(sections, file.path), [sections, file.path]);
+  const done = useMemo(() => diff.hunks.map((h) => hunkDone(h, marks)), [diff, marks]);
+  const folded = useMemo(
+    () => new Set(done.flatMap((d, i) => (d && !unfoldedDone[`${key}#${i}`] ? [i] : []))),
+    [done, unfoldedDone, key],
+  );
 
   const newLines = linesState?.state === 'ready' ? linesState.value : null;
+
+  // Syntax colours for each side, loaded in the background; lines render plain until they arrive.
+  const oldTokens = useStore((s) => (file.old_blob ? s.tokens[file.old_blob] : undefined));
+  const newTokens = useStore((s) => (file.new_blob ? s.tokens[file.new_blob] : undefined));
+  const { loadTokens } = useStore.getState();
+  useEffect(() => {
+    if (file.old_blob && diff.old_lines !== null && file.old_path) void loadTokens(file.old_blob, file.old_path, diff.old_lines);
+    if (file.new_blob && diff.new_lines !== null && file.new_path) void loadTokens(file.new_blob, file.new_path, diff.new_lines);
+  }, [file, diff.old_lines, diff.new_lines, loadTokens]);
+  const tokensFor = (side: Side, no: number | null): Token[] | undefined => {
+    const t = side === 'old' ? oldTokens : newTokens;
+    return no !== null && t?.state === 'ready' && t.value ? t.value[no - 1] : undefined;
+  };
   const allGaps = useMemo(() => gaps(diff), [diff]);
 
   // Comments on context lines must stay visible even inside a collapsed gap.
@@ -54,7 +80,11 @@ export function DiffTable({ file, diff, threads }: Props) {
     }
   }, [blob, diff.new_lines, revealed.length, forced.length, linesState, loadLines]);
 
-  const rows = useMemo(() => buildRows(diff, { revealed, forced, newLines }), [diff, revealed, forced, newLines]);
+  const rows = useMemo(
+    () =>
+      foldDone(buildRows(diff, { revealed, forced, newLines }), folded, (h) => diff.hunks[h]!.lines.filter((l) => l.kind !== 'context').length),
+    [diff, revealed, forced, newLines, folded],
+  );
   const split = useMemo(() => (view === 'split' ? toSplit(rows) : null), [rows, view]);
 
   // Threads and the open composer attach below the last line they cover, per side.
@@ -126,6 +156,50 @@ export function DiffTable({ file, diff, threads }: Props) {
     );
   };
 
+  const doneToggle = (h: number) => {
+    const hunk: Hunk = diff.hunks[h]!;
+    return (
+      <span className="done-controls">
+        {done[h] && !folded.has(h) && (
+          <button className="link-btn" onClick={() => setDoneUnfolded(`${key}#${h}`, false)}>Fold</button>
+        )}
+        <button className={`done-toggle${done[h] ? ' on' : ''}`} onClick={() => void setHunkDone(file, hunk, !done[h])}
+          title={done[h] ? 'Mark this section as not reviewed' : 'Mark this section reviewed. It stays done until its lines change.'}>
+          {done[h] ? <><Icon name="check" size={12} /> Done</> : 'Mark done'}
+        </button>
+      </span>
+    );
+  };
+
+  /** Threads anchored inside a hunk, shown under its folded summary so no conversation is hidden. */
+  const threadsInHunk = (h: number): ThreadView[] => {
+    const hunk = diff.hunks[h]!;
+    return threads.filter((t) => {
+      const end = currentLines(t).end;
+      if (end === null) return false;
+      return t.side === 'new'
+        ? end >= hunk.new_start && end < hunk.new_start + Math.max(hunk.new_lines, 1)
+        : end >= hunk.old_start && end < hunk.old_start + Math.max(hunk.old_lines, 1);
+    });
+  };
+
+  const doneRow = (r: Extract<Row, { type: 'done' }>) => {
+    const inside = threadsInHunk(r.hunk);
+    return (
+      <Fragment key={r.key}>
+        <tr className="done-row">
+          <td colSpan={width}>
+            <Icon name="check" size={14} /> Reviewed · {r.changed} changed line{r.changed === 1 ? '' : 's'}
+            <button className="link-btn" onClick={() => setDoneUnfolded(`${key}#${r.hunk}`, true)}>Show</button>
+          </td>
+        </tr>
+        {inside.length > 0 && (
+          <tr className="attach-row"><td colSpan={width}>{inside.map((t) => <ThreadWidget key={t.id} thread={t} />)}</td></tr>
+        )}
+      </Fragment>
+    );
+  };
+
   const expanderRow = (r: Extract<Row, { type: 'expander' }>) => {
     const count = r.end - r.start + 1;
     const doExpand = (range: Range) => void expand(file, range);
@@ -158,6 +232,7 @@ export function DiffTable({ file, diff, threads }: Props) {
               Show all {count}
             </button>
           )}
+          {r.hunk !== null && doneToggle(r.hunk)}
         </td>
       </tr>
     );
@@ -176,13 +251,13 @@ export function DiffTable({ file, diff, threads }: Props) {
   const hunkRow = (r: Extract<Row, { type: 'hunk' }>) => (
     <tr key={r.key} className="hunk-row">
       <td colSpan={view === 'split' ? 1 : 2} />
-      <td colSpan={view === 'split' ? 3 : 2}>{r.header}</td>
+      <td colSpan={view === 'split' ? 3 : 2}>{r.header}{doneToggle(r.hunk)}</td>
     </tr>
   );
 
-  const code = (text: string, noEol: boolean) => (
+  const code = (text: string, noEol: boolean, tokens?: Token[]) => (
     <>
-      <span className="code-text">{text}</span>
+      <span className="code-text">{renderTokens(text, tokens)}</span>
       {noEol && <span className="no-eol" title="No newline at end of file">⊘</span>}
     </>
   );
@@ -204,6 +279,7 @@ export function DiffTable({ file, diff, threads }: Props) {
             if (r.type === 'expander') return expanderRow(r);
             if (r.type === 'collapse') return collapseRow(r);
             if (r.type === 'hunk') return hunkRow(r);
+            if (r.type === 'done') return doneRow(r);
             const side: Side = r.kind === 'del' ? 'old' : 'new';
             const no = side === 'old' ? r.oldNo : r.newNo;
             const selected = isSelected(selection, side, no) || (r.kind === 'context' && isSelected(selection, 'old', r.oldNo));
@@ -213,7 +289,7 @@ export function DiffTable({ file, diff, threads }: Props) {
                   <td className="num" data-no={r.oldNo ?? ''} onMouseDown={(e) => onGutterDown(e, i, null)} />
                   <td className="num" data-no={r.newNo ?? ''} onMouseDown={(e) => onGutterDown(e, i, null)} />
                   <td className="marker">{addButton(i, null)}{r.kind === 'add' ? '+' : r.kind === 'del' ? '-' : ' '}</td>
-                  <td className="code">{code(r.text, r.noEol)}</td>
+                  <td className="code">{code(r.text, r.noEol, r.kind === 'del' ? tokensFor('old', r.oldNo) : tokensFor('new', r.newNo))}</td>
                 </tr>
                 {r.kind === 'context' && attachments('old', r.oldNo)}
                 {attachments(side, no)}
@@ -237,6 +313,7 @@ export function DiffTable({ file, diff, threads }: Props) {
           if (r.type === 'expander') return expanderRow(r);
           if (r.type === 'collapse') return collapseRow(r);
           if (r.type === 'hunk') return hunkRow(r);
+          if (r.type === 'done') return doneRow(r);
           const { left, right } = r;
           const selL = left ? isSelected(selection, 'old', left.no) : false;
           const selR = right ? isSelected(selection, 'new', right.no) : false;
@@ -247,13 +324,13 @@ export function DiffTable({ file, diff, threads }: Props) {
                   onMouseDown={left ? (e) => onGutterDown(e, i, 'old') : undefined} />
                 <td className={`code ${cellClass(left?.kind, left?.expanded)}${selL ? ' selected' : ''}`}>
                   {left && addButton(i, 'old')}
-                  {left && code(left.text, left.noEol)}
+                  {left && code(left.text, left.noEol, tokensFor('old', left.no))}
                 </td>
                 <td className={`num ${cellClass(right?.kind, right?.expanded)}${selR ? ' selected' : ''}`} data-no={right?.no ?? ''}
                   onMouseDown={right ? (e) => onGutterDown(e, i, 'new') : undefined} />
                 <td className={`code ${cellClass(right?.kind, right?.expanded)}${selR ? ' selected' : ''}`}>
                   {right && addButton(i, 'new')}
-                  {right && code(right.text, right.noEol)}
+                  {right && code(right.text, right.noEol, tokensFor('new', right.no))}
                 </td>
               </tr>
               {left && attachments('old', left.no)}

@@ -119,4 +119,10 @@ export const MIGRATIONS: readonly string[] = [
   -- When a suggestion in this comment was written into the working tree.
   ALTER TABLE comment ADD COLUMN applied_at TEXT;
   `,
+  `
+  -- Archived conversations and reviews are hidden from the normal views, and no longer keep
+  -- their snapshots pinned.
+  ALTER TABLE thread ADD COLUMN archived_at TEXT;
+  ALTER TABLE review ADD COLUMN archived_at TEXT;
+  `,
 ];

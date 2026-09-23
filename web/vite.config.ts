@@ -8,6 +8,8 @@ export default defineConfig({
   root: import.meta.dirname,
   plugins: [react()],
   build: { outDir: 'dist', emptyOutDir: true, sourcemap: true, target: 'es2022' },
+  // ES-module workers can code-split, so each syntax grammar is its own chunk, fetched on first use.
+  worker: { format: 'es' },
   server: {
     proxy: {
       '/api': { target, changeOrigin: true },

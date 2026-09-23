@@ -1,10 +1,12 @@
 import { create } from 'zustand';
 import type {
-  BaseInfo, CommitsInfo, FileChange, FileDiff, Health, ResolvedDiff, ReviewView, Scope, Side, ThreadView,
+  AnchoredSectionMark, BaseInfo, CommitsInfo, FileChange, Hunk, FileDiff, Health, ResolvedDiff, ReviewView, Scope, Side, ThreadView,
 } from '../../src/core/api-types.ts';
 import { api, ApiError } from './api.ts';
 import { diffKey, markKey, viewedBlob } from './format.ts';
+import { highlight, MAX_HIGHLIGHT_LINES, type Token } from './highlight/index.tsx';
 import { add, removeOverlapping, type Range } from './lib/ranges.ts';
+import { hunkDone, hunkRanges, marksOverlapping, validMarks } from './lib/sections.ts';
 
 export type ViewMode = 'unified' | 'split';
 export type Panel = 'threads' | 'review' | null;
@@ -42,7 +44,13 @@ interface State {
 
   diffs: Record<string, Loadable<FileDiff>>;
   lines: Record<string, Loadable<string[]>>;
+  /** Syntax tokens per blob; null when the file is not highlighted (unknown language, too long). */
+  tokens: Record<string, Loadable<Token[][] | null>>;
   threads: ThreadView[];
+  /** "Done" marks, anchored to the diff being viewed. */
+  sections: AnchoredSectionMark[];
+  /** Done hunks the user unfolded this session, by `diffKey#hunk`. */
+  unfoldedDone: Record<string, true>;
   commits: Loadable<CommitsInfo> | null;
   reviews: ReviewView[];
   draft: ReviewView | null;
@@ -69,9 +77,14 @@ interface Actions {
   refreshReviews(): Promise<void>;
   refreshMarks(): Promise<void>;
   loadCommits(): Promise<void>;
+  refreshSections(): Promise<void>;
+  setHunkDone(file: FileChange, hunk: Hunk, done: boolean): Promise<void>;
+  archiveResolved(): Promise<void>;
+  setDoneUnfolded(key: string, unfolded: boolean): void;
   applySuggestion(commentId: number): Promise<void>;
   loadDiff(file: FileChange, force?: boolean): Promise<void>;
   loadLines(oid: string, total: number): Promise<string[] | null>;
+  loadTokens(oid: string, path: string, total: number): Promise<void>;
 
   setView(view: ViewMode): void;
   expand(file: FileChange, range: Range): Promise<void>;
@@ -140,7 +153,10 @@ export const useStore = create<Store>()((set, get) => {
     stale: false,
     diffs: {},
     lines: {},
+    tokens: {},
     threads: [],
+    sections: [],
+    unfoldedDone: {},
     commits: null,
     reviews: [],
     draft: null,
@@ -191,8 +207,8 @@ export const useStore = create<Store>()((set, get) => {
       try {
         const [resolved, base] = await Promise.all([api.resolve(get().scope), api.base()]);
         set({ resolved, base, stale: false });
-        // Thread positions depend on the diff, so re-anchor them to the new one.
-        await get().refreshThreads();
+        // Thread and "done" positions depend on the diff, so re-anchor them to the new one.
+        await Promise.all([get().refreshThreads(), get().refreshSections()]);
       } catch (e) {
         if (e instanceof ApiError && e.code === 'no_review' && get().scope.kind === 'since_review') {
           // The review this scope pointed at is gone or never existed; fall back rather than strand the user.
@@ -232,6 +248,54 @@ export const useStore = create<Store>()((set, get) => {
       } catch (e) {
         fail(e);
       }
+    },
+
+    async refreshSections() {
+      const r = get().resolved;
+      if (!r) return;
+      try {
+        set({ sections: (await api.sectionMarks({ from: r.from.tree, to: r.to.tree })).marks });
+      } catch (e) {
+        fail(e);
+      }
+    },
+
+    async setHunkDone(file, hunk, done) {
+      try {
+        if (done) {
+          for (const r of hunkRanges(hunk)) {
+            await api.addSectionMark({ path: file.path, from_blob: file.old_blob, to_blob: file.new_blob, side: r.side, start_line: r.start, end_line: r.end });
+          }
+        } else {
+          for (const m of marksOverlapping(hunk, validMarks(get().sections, file.path))) await api.removeSectionMark(m.id);
+        }
+        await get().refreshSections();
+        // Finishing the last section finishes the file.
+        const diff = get().diffs[diffKey(file)];
+        if (done && diff?.state === 'ready') {
+          const marks = validMarks(get().sections, file.path);
+          if (diff.value.hunks.every((h) => hunkDone(h, marks))) await get().setViewed(file, true);
+        }
+      } catch (e) {
+        fail(e);
+      }
+    },
+
+    async archiveResolved() {
+      try {
+        const r = await api.archive();
+        get().toast(`Archived ${r.threads} conversation${r.threads === 1 ? '' : 's'} and ${r.reviews} review${r.reviews === 1 ? '' : 's'}.`);
+        await Promise.all([get().refreshThreads(), get().refreshReviews()]);
+      } catch (e) {
+        fail(e);
+      }
+    },
+
+    setDoneUnfolded(key, unfolded) {
+      set((s) => {
+        const { [key]: _drop, ...rest } = s.unfoldedDone;
+        return { unfoldedDone: unfolded ? { ...rest, [key]: true } : rest };
+      });
     },
 
     async loadCommits() {
@@ -284,6 +348,18 @@ export const useStore = create<Store>()((set, get) => {
         set((s) => ({ lines: { ...s.lines, [oid]: { state: 'error', message: errorText(e) } } }));
         return null;
       }
+    },
+
+    async loadTokens(oid, path, total) {
+      if (get().tokens[oid]) return;
+      if (total > MAX_HIGHLIGHT_LINES) {
+        set((s) => ({ tokens: { ...s.tokens, [oid]: { state: 'ready', value: null } } }));
+        return;
+      }
+      set((s) => ({ tokens: { ...s.tokens, [oid]: { state: 'loading' } } }));
+      const lines = await get().loadLines(oid, total);
+      const value = lines ? await highlight(lines.join('\n'), path) : null;
+      set((s) => ({ tokens: { ...s.tokens, [oid]: { state: 'ready', value } } }));
     },
 
     setView(view) {
@@ -498,11 +574,16 @@ export const useStore = create<Store>()((set, get) => {
         case 'agents.changed':
           set({ listening: Number(e.listening) || 0 });
           break;
+        case 'archive.changed':
+          void s.refreshThreads();
+          void s.refreshReviews();
+          break;
         case 'suggestion.applied':
           void s.refreshThreads();
           break;
         case 'marks.changed':
           void s.refreshMarks();
+          void s.refreshSections();
           break;
         case 'worktree.changed':
         case 'base.changed':
@@ -512,3 +593,6 @@ export const useStore = create<Store>()((set, get) => {
     },
   };
 });
+
+// Exposed for debugging and browser tests. Everything in it is also available through the API.
+(globalThis as { __postil?: typeof useStore }).__postil = useStore;

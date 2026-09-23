@@ -32,6 +32,7 @@ export function assertRev(value: string): string {
 
 /** Namespace for refs that keep postil's snapshot trees alive through `git gc`. */
 export const PIN_PREFIX = 'refs/postil/trees/';
+export const PIN_BLOB_PREFIX = 'refs/postil/blobs/';
 
 export interface TreeEntry {
   mode: string;
@@ -293,6 +294,22 @@ export class Repo {
   async unpin(tree: string): Promise<void> {
     assertOid(tree, 'tree id');
     await git(this.root, ['update-ref', '-d', `${PIN_PREFIX}${tree}`]);
+  }
+
+  /** Keep a blob alive through `git gc`, as for a section mark on a version never snapshotted. */
+  async pinBlob(blob: string): Promise<void> {
+    assertOid(blob, 'blob id');
+    await git(this.root, ['update-ref', `${PIN_BLOB_PREFIX}${blob}`, blob]);
+  }
+
+  async unpinBlob(blob: string): Promise<void> {
+    assertOid(blob, 'blob id');
+    await git(this.root, ['update-ref', '-d', `${PIN_BLOB_PREFIX}${blob}`]);
+  }
+
+  async pinnedBlobs(): Promise<string[]> {
+    const out = await gitText(this.root, ['for-each-ref', '--format=%(objectname)', PIN_BLOB_PREFIX]);
+    return out.split('\n').filter((l) => l !== '');
   }
 
   async pinnedTrees(): Promise<string[]> {

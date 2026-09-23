@@ -64,9 +64,13 @@ export type Row =
       canUp: boolean;
       /** Header of the hunk directly below, shown GitHub-style in the expander. */
       header: string | null;
+      /** Index of the hunk directly below, when this expander heads it. */
+      hunk: number | null;
     }
   | { type: 'collapse'; key: string; start: number; end: number; count: number }
-  | { type: 'hunk'; key: string; header: string }
+  | { type: 'hunk'; key: string; header: string; hunk: number }
+  /** A hunk the user marked done, folded to one line. */
+  | { type: 'done'; key: string; hunk: number; changed: number }
   | {
       type: 'line';
       key: string;
@@ -77,6 +81,8 @@ export type Row =
       noEol: boolean;
       /** True for context revealed from a gap rather than part of a hunk. */
       expanded: boolean;
+      /** The hunk this line belongs to; null for revealed context. */
+      hunk: number | null;
     };
 
 export interface RowOptions {
@@ -105,7 +111,7 @@ export function buildRows(diff: Pick<FileDiff, 'hunks' | 'new_lines'>, opts: Row
         for (let n = a; n <= b; n++) {
           rows.push({
             type: 'line', key: `x${n}`, kind: 'context', oldNo: n + gap.offset, newNo: n,
-            text: opts.newLines?.[n - 1] ?? '', noEol: false, expanded: true,
+            text: opts.newLines?.[n - 1] ?? '', noEol: false, expanded: true, hunk: null,
           });
         }
       } else {
@@ -116,6 +122,7 @@ export function buildRows(diff: Pick<FileDiff, 'hunks' | 'new_lines'>, opts: Row
           type: 'expander', key: `e${a}`, start: a, end: b,
           canDown: !atFileTop, canUp: !atFileBottom,
           header: touchesNext ? hunkHeader(gap.next!) : null,
+          hunk: touchesNext ? diff.hunks.indexOf(gap.next!) : null,
         });
       }
     }
@@ -130,14 +137,15 @@ export function buildRows(diff: Pick<FileDiff, 'hunks' | 'new_lines'>, opts: Row
 
   diff.hunks.forEach((hunk, i) => {
     const gap = gapBefore.get(hunk);
-    // With a gap, its expander carries the header (and it disappears once fully revealed).
-    // Without one, the hunk starts the file or directly abuts the previous hunk: show it plainly.
+    // The expander of the gap above carries the hunk's header while any of the gap is hidden.
+    // Otherwise the hunk gets its own header row, which also holds its "done" control.
     if (gap) emitGap(gap);
-    else rows.push({ type: 'hunk', key: `h${i}`, header: hunkHeader(hunk) });
+    const last = rows.at(-1);
+    if (!(last?.type === 'expander' && last.hunk === i)) rows.push({ type: 'hunk', key: `h${i}`, header: hunkHeader(hunk), hunk: i });
     hunk.lines.forEach((l, j) => {
       rows.push({
         type: 'line', key: `l${i}.${j}`, kind: l.kind, oldNo: l.old_no, newNo: l.new_no,
-        text: l.text, noEol: l.no_eol === true, expanded: false,
+        text: l.text, noEol: l.no_eol === true, expanded: false, hunk: i,
       });
     });
   });
@@ -157,7 +165,7 @@ export interface Cell {
 
 export type SplitRow =
   | Exclude<Row, { type: 'line' }>
-  | { type: 'pair'; key: string; left: Cell | null; right: Cell | null };
+  | { type: 'pair'; key: string; left: Cell | null; right: Cell | null; hunk: number | null };
 
 /** Pair deletions with the additions that follow them, side by side. */
 export function toSplit(rows: readonly Row[]): SplitRow[] {
@@ -173,7 +181,10 @@ export function toSplit(rows: readonly Row[]): SplitRow[] {
     for (let i = 0; i < n; i++) {
       const d = dels[i];
       const a = adds[i];
-      out.push({ type: 'pair', key: `p${d?.key ?? ''}|${a?.key ?? ''}`, left: d ? cell(d, 'old') : null, right: a ? cell(a, 'new') : null });
+      out.push({
+        type: 'pair', key: `p${d?.key ?? ''}|${a?.key ?? ''}`, left: d ? cell(d, 'old') : null, right: a ? cell(a, 'new') : null,
+        hunk: (d ?? a)!.hunk,
+      });
     }
     dels = [];
     adds = [];
@@ -187,7 +198,7 @@ export function toSplit(rows: readonly Row[]): SplitRow[] {
       adds.push(r);
     } else {
       flush();
-      if (r.type === 'line') out.push({ type: 'pair', key: `p${r.key}`, left: cell(r, 'old'), right: cell(r, 'new') });
+      if (r.type === 'line') out.push({ type: 'pair', key: `p${r.key}`, left: cell(r, 'old'), right: cell(r, 'new'), hunk: r.hunk });
       else out.push(r);
     }
   }
@@ -202,4 +213,30 @@ export function oldToNewInGaps(allGaps: readonly Gap[], oldNo: number): number |
     if (n >= g.start && n <= g.end) return n;
   }
   return null;
+}
+
+/**
+ * Replace the lines of folded hunks with one "done" row each. Works on unified and split rows
+ * alike, since both carry the hunk index on their line rows.
+ */
+export function foldDone<T extends { type: string; hunk?: number | null }>(
+  rows: readonly T[],
+  folded: ReadonlySet<number>,
+  changedLines: (hunk: number) => number,
+): Array<T | Extract<Row, { type: 'done' }>> {
+  const out: Array<T | Extract<Row, { type: 'done' }>> = [];
+  const emitted = new Set<number>();
+  for (const r of rows) {
+    const isLine = r.type === 'line' || r.type === 'pair';
+    const h = isLine ? r.hunk : null;
+    if (h === null || h === undefined || !folded.has(h)) {
+      out.push(r);
+      continue;
+    }
+    if (!emitted.has(h)) {
+      emitted.add(h);
+      out.push({ type: 'done', key: `d${h}`, hunk: h, changed: changedLines(h) });
+    }
+  }
+  return out;
 }

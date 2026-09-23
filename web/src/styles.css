@@ -414,3 +414,38 @@ code, pre { font-family: var(--mono); }
 .commit-sha { font-size: 12px; color: var(--accent); flex: none; }
 .commit-subject { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; }
 .commit-meta { font-size: 12px; flex: none; }
+
+/* ------------------------------------------------------------------ phase 5: sections */
+.done-controls { float: right; display: inline-flex; gap: 6px; align-items: center; font-family: var(--sans); }
+.done-toggle {
+  display: inline-flex; align-items: center; gap: 4px; font: 11px var(--sans); padding: 0 8px; line-height: 18px;
+  border: 1px solid var(--border); border-radius: 10px; background: var(--bg); color: var(--fg-muted); cursor: pointer;
+}
+.done-toggle:hover { border-color: var(--primary); color: var(--primary); }
+.done-toggle.on { background: var(--primary); border-color: var(--primary); color: #fff; }
+.done-row td { background: var(--bg-subtle); color: var(--fg-muted); font: 12px var(--sans); padding: 4px 12px !important; border-top: 1px solid var(--border-muted); border-bottom: 1px solid var(--border-muted); }
+.done-row .icon { color: var(--primary); vertical-align: -2px; }
+.done-row .link-btn { margin-left: 8px; }
+.chip-sections { background: var(--bg-inset); }
+.chip-sections.all { background: #dafbe1; color: #1a7f37; }
+@media (prefers-color-scheme: dark) { .chip-sections.all { background: rgba(46, 160, 67, 0.2); color: #3fb950; } }
+
+/* ------------------------------------------------------------------ keyboard help */
+.modal-backdrop { position: fixed; inset: 0; background: rgba(1, 4, 9, 0.45); z-index: 60; display: flex; align-items: flex-start; justify-content: center; padding-top: 12vh; }
+.modal { background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow); width: 480px; max-width: 92vw; }
+.keymap { width: 100%; border-collapse: collapse; font-size: 13px; }
+.keymap td { padding: 6px 16px; border-top: 1px solid var(--border-muted); }
+.keymap td:first-child { white-space: nowrap; width: 1%; }
+kbd { font: 12px var(--mono); padding: 1px 6px; border: 1px solid var(--border); border-bottom-width: 2px; border-radius: 4px; background: var(--bg-subtle); }
+.help-btn { font-weight: 700; }
+
+/* ------------------------------------------------------------------ syntax colours */
+.tk { color: var(--sl); }
+@media (prefers-color-scheme: dark) { .tk { color: var(--sd); } }
+
+/* ------------------------------------------------------------------ large reviews */
+/* The browser skips layout and paint for file bodies far off screen. Unlike unmounting them,
+   this keeps their state, such as a half-written comment in a file you scrolled past. */
+.file-body { content-visibility: auto; contain-intrinsic-size: auto 600px; }
+
+.panel-note { display: flex; gap: 8px; align-items: center; padding: 8px 12px; border-bottom: 1px solid var(--border-muted); font-size: 12px; }
