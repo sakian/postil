@@ -183,7 +183,7 @@ describe('postil UI', { timeout: 120_000 }, () => {
     const db = file('src/db.ts');
     await until(async () => /now propagate/.test(await db.innerText()), "Claude's reply in the db.ts thread");
     assert.match(await db.locator('.thread').innerText(), /Needs your decision/);
-    assert.equal(await page.locator('.claude-status').count(), 0);
+    assert.match(await page.locator('.claude-status').innerText(), /not listening/, 'no Claude session is connected in this test');
     await shot('07-claude-replied');
   });
 
@@ -247,10 +247,10 @@ describe('postil UI', { timeout: 120_000 }, () => {
     await page.locator('body').click({ position: { x: 5, y: 5 } });
     await page.keyboard.press('s');
     await page.locator('table.diff-split').first().waitFor();
-    await page.waitForTimeout(600); // let the debounced save land
+    await until(async () => (await agent<{ value: unknown }>('GET', '/api/ui-state/view')).value === 'split', 'the layout to be saved');
     await page.goto(server.info.url + '/');
-    await page.locator('section.file').first().waitFor();
-    assert.ok(await page.locator('table.diff-split').first().isVisible(), 'split view restored');
+    await page.locator('table.diff-split').first().waitFor({ timeout: 8000 });
+    assert.equal(await page.locator('table.diff-unified:not(.suggestion-diff)').count(), 0, 'split view restored everywhere');
     assert.equal(await page.locator('.tree-file.is-viewed').count(), 1, 'viewed mark restored');
     await shot('11-split-after-reload');
   });

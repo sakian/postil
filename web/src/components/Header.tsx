@@ -42,6 +42,7 @@ function ScopePicker() {
 
 function ClaudeStatus() {
   const reviews = useStore((s) => s.reviews);
+  const listening = useStore((s) => s.listening);
   const working = reviews.find((r) => r.status === 'in_progress');
   const waiting = reviews.filter((r) => r.status === 'submitted');
   if (working) {
@@ -49,12 +50,20 @@ function ClaudeStatus() {
   }
   if (waiting.length) {
     return (
-      <span className="claude-status waiting" title="Submitted, but no Claude session has fetched it yet. Is a session watching this repository?">
-        Waiting for Claude: {waiting.map((r) => `#${r.id}`).join(', ')}
+      <span className="claude-status waiting" title={listening ? 'Submitted; a listening Claude session will pick it up.' : 'No Claude session is listening. Run /postil:review in Claude Code.'}>
+        Waiting for Claude: {waiting.map((r) => `#${r.id}`).join(', ')}{!listening && ' (not listening)'}
       </span>
     );
   }
-  return null;
+  return listening ? (
+    <span className="claude-status listening" title="A Claude Code session will pick up your review as soon as you submit it">
+      <span className="dot" /> Claude is listening
+    </span>
+  ) : (
+    <span className="claude-status idle" title="Run /postil:review in Claude Code so submitted reviews are picked up automatically">
+      Claude is not listening
+    </span>
+  );
 }
 
 export function Header() {

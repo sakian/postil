@@ -188,6 +188,10 @@ export class Store {
     );
   }
 
+  claimReview(id: number, session: string): void {
+    this.run('UPDATE review SET agent_session = :session WHERE id = :id', { id, session });
+  }
+
   setDraftBody(id: number, body: string): void {
     this.run("UPDATE review SET body = :body WHERE id = :id AND status = 'draft'", { id, body });
   }
@@ -349,6 +353,20 @@ export class Store {
         ? this.all('SELECT * FROM section_mark WHERE path = :path ORDER BY start_line', { path })
         : this.all('SELECT * FROM section_mark ORDER BY path, start_line')
     ) as unknown as SectionMarkRow[];
+  }
+
+  // ------------------------------------------------------------------ listeners
+
+  registerListener(sessionId: string): void {
+    this.run(
+      `INSERT INTO listener (session_id, registered_at, last_seen) VALUES (:sessionId, :now, :now)
+       ON CONFLICT (session_id) DO UPDATE SET last_seen = :now`,
+      { sessionId, now: nowIso() },
+    );
+  }
+
+  isListener(sessionId: string): boolean {
+    return this.one('SELECT 1 AS x FROM listener WHERE session_id = :sessionId', { sessionId }) !== undefined;
   }
 
   // ------------------------------------------------------------------ ui state

@@ -140,6 +140,8 @@ export interface Health {
   version: string;
   root: string;
   pid: number;
+  /** Claude sessions listening for reviews right now. */
+  listening: number;
 }
 
 export interface ResolvedDiff extends ResolvedScope {
@@ -148,4 +150,22 @@ export interface ResolvedDiff extends ResolvedScope {
 
 export interface ApiErrorBody {
   error: { code: string; message: string; details?: unknown };
+}
+
+/** What a Claude Code hook needs to decide whether to act in a given session. */
+export interface HookStatus {
+  /** The session has asked to be woken for reviews. Hooks stay silent otherwise. */
+  listener: boolean;
+  /** Reviews this session picked up and has not completed. */
+  in_progress: Array<{
+    review_id: number;
+    unanswered: Array<{ thread_id: number; path: string; start_line: number | null; end_line: number | null }>;
+  }>;
+  /** Submitted reviews that no listening session is working on. */
+  waiting: number[];
+}
+
+export interface ListenResult {
+  /** Reviews waiting for Claude right now. */
+  pending: number[];
 }

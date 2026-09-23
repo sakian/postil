@@ -29,6 +29,8 @@ interface State {
   authFailed: boolean;
   connected: boolean;
   health: Health | null;
+  /** Claude sessions listening for reviews right now. */
+  listening: number;
   base: BaseInfo | null;
 
   scope: Scope;
@@ -126,6 +128,7 @@ export const useStore = create<Store>()((set, get) => {
     authFailed: false,
     connected: false,
     health: null,
+    listening: 0,
     base: null,
     scope: { kind: 'all' },
     resolved: null,
@@ -159,6 +162,7 @@ export const useStore = create<Store>()((set, get) => {
         ]);
         set({
           health,
+          listening: health.listening,
           view: view.value ?? 'unified',
           scope: scope.value ?? { kind: 'all' },
           expanded: expanded.value ?? {},
@@ -433,6 +437,7 @@ export const useStore = create<Store>()((set, get) => {
       if (connected && !was && get().booted) {
         void get().refreshThreads();
         void get().refreshReviews();
+        void api.health().then((h) => set({ listening: h.listening }), () => undefined);
       }
     },
 
@@ -463,6 +468,9 @@ export const useStore = create<Store>()((set, get) => {
           });
           break;
         }
+        case 'agents.changed':
+          set({ listening: Number(e.listening) || 0 });
+          break;
         case 'marks.changed':
           void s.refreshMarks();
           break;

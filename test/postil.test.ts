@@ -416,3 +416,94 @@ describe('diff content, marks and ui state', () => {
     assert.deepEqual(postil.uiStateKeys(), ['view.mode']);
   });
 });
+
+describe('agent sessions', () => {
+  let fx: Fixture;
+  let postil: Postil;
+  let from: string;
+  let to: string;
+  const A = 'aaaaaaaa-1111-2222-3333-444444444444';
+  const B = 'bbbbbbbb-1111-2222-3333-444444444444';
+
+  beforeEach(async () => {
+    fx = makeFixture();
+    fx.write('f.txt', numbered(5));
+    fx.commit('base');
+    postil = await Postil.open(fx.dir);
+    fx.write('f.txt', numbered(5, { 2: 'two' }));
+    const s = await postil.resolveScope({ kind: 'all' });
+    from = s.from.tree;
+    to = s.to.tree;
+  });
+  const cleanup = () => { postil.close(); fx.cleanup(); };
+  const submitOne = async () => {
+    const t = await postil.createThread({ from_tree: from, to_tree: to, path: 'f.txt', side: 'new', start_line: 2, body: 'why?' });
+    return { thread: t.id, review: (await postil.submitReview()).id };
+  };
+
+  it('stays silent for sessions that never asked to listen', async () => {
+    try {
+      await submitOne();
+      assert.deepEqual(postil.hookStatus(A), { listener: false, in_progress: [], waiting: [] });
+    } finally {
+      cleanup();
+    }
+  });
+
+  it('tells a listening session what is waiting, then what it still owes', async () => {
+    try {
+      assert.deepEqual(postil.listen(A), { pending: [] });
+      const { thread, review } = await submitOne();
+      assert.deepEqual(postil.hookStatus(A).waiting, [review]);
+
+      await postil.reviewForAgent(review, A);
+      let status = postil.hookStatus(A);
+      assert.deepEqual(status.waiting, []);
+      assert.deepEqual(status.in_progress, [{ review_id: review, unanswered: [{ thread_id: thread, path: 'f.txt', start_line: 2, end_line: 2 }] }]);
+
+      await postil.agentReply(thread, 'because', false, A);
+      status = postil.hookStatus(A);
+      assert.deepEqual(status.in_progress, [{ review_id: review, unanswered: [] }], 'still owes complete_review');
+      await postil.completeReview(review, 'done');
+      assert.deepEqual(postil.hookStatus(A), { listener: true, in_progress: [], waiting: [] });
+    } finally {
+      cleanup();
+    }
+  });
+
+  it('keeps a review with the live session that claimed it', async () => {
+    try {
+      const { review } = await submitOne();
+      postil.agentConnected(A);
+      await postil.reviewForAgent(review, A);
+      await rejectsWith(postil.reviewForAgent(review, B), 'claimed_elsewhere');
+      postil.listen(B);
+      assert.deepEqual(postil.hookStatus(B).waiting, [], "another live session's review is not waiting");
+    } finally {
+      cleanup();
+    }
+  });
+
+  it('lets another session take over once the claimer stops listening', async () => {
+    try {
+      const { review } = await submitOne();
+      postil.agentConnected(A);
+      await postil.reviewForAgent(review, A);
+      postil.agentDisconnected(A);
+      postil.listen(B);
+      assert.deepEqual(postil.hookStatus(B).waiting, [review], 'orphaned review is waiting again');
+      await postil.reviewForAgent(review, B);
+      assert.equal(postil.store.getReview(review)?.agent_session, B);
+    } finally {
+      cleanup();
+    }
+  });
+
+  it('rejects malformed session ids', async () => {
+    try {
+      await rejectsWith(() => postil.listen('../../etc'), 'invalid_session');
+    } finally {
+      cleanup();
+    }
+  });
+});

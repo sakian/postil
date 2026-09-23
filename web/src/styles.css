@@ -144,6 +144,10 @@ code, pre { font-family: var(--mono); }
   .claude-status.working { background: rgba(217, 119, 87, 0.2); color: #e8a086; }
   .claude-status.waiting { background: rgba(187, 128, 9, 0.2); color: #d29922; }
 }
+.claude-status.listening { background: #dafbe1; color: #1a7f37; }
+.claude-status.idle { color: var(--fg-muted); border: 1px dashed var(--border); }
+.claude-status .dot { width: 8px; height: 8px; border-radius: 50%; background: currentColor; }
+@media (prefers-color-scheme: dark) { .claude-status.listening { background: rgba(46, 160, 67, 0.2); color: #3fb950; } }
 .pulse { width: 8px; height: 8px; border-radius: 50%; background: var(--claude); animation: pulse 1.2s ease-in-out infinite; }
 @keyframes pulse { 50% { opacity: 0.25; } }
 .segmented { display: inline-flex; border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; }

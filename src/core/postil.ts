@@ -6,11 +6,14 @@ import { splitLines } from '../git/parse.ts';
 import { assertOid, Repo } from '../git/repo.ts';
 import type { FileChange } from '../git/types.ts';
 import { EventBus } from './events.ts';
+import { agentHint } from './hints.ts';
+
+export { agentHint } from './hints.ts';
 import { HttpError } from './util.ts';
 
 import type {
-  AgentReview, AgentThread, BaseConfig, BaseInfo, CommentView, CommitsInfo, Endpoint, FileDiff, NewThreadInput,
-  ResolvedScope, ReviewView, Scope, ThreadView,
+  AgentReview, AgentThread, BaseConfig, BaseInfo, CommentView, CommitsInfo, Endpoint, FileDiff, HookStatus, ListenResult,
+  NewThreadInput, ResolvedScope, ReviewView, Scope, ThreadView,
 } from './api-types.ts';
 
 export type * from './api-types.ts';
@@ -29,6 +32,14 @@ function requireBody(body: string, what = 'body'): string {
   return body;
 }
 
+const SESSION_ID = /^[\w-]{1,128}$/;
+
+/** Claude Code session ids arrive from hooks and tool calls; accept only the plain id shape. */
+export function assertSession(value: string): string {
+  if (!SESSION_ID.test(value)) throw new HttpError(400, 'invalid session id', 'invalid_session');
+  return value;
+}
+
 function short(oid: string | null): string {
   return oid ? oid.slice(0, 7) : 'empty';
 }
@@ -44,6 +55,8 @@ export class Postil {
   readonly store: Store;
   readonly bus: EventBus;
   private lastLiveTree: string | null = null;
+  /** Open agent event sockets per Claude session: a session is "live" while its monitor is armed. */
+  private readonly liveAgents = new Map<string, number>();
 
   constructor(repo: Repo, store: Store, bus: EventBus = new EventBus()) {
     this.repo = repo;
@@ -462,11 +475,74 @@ export class Postil {
         type: 'review.submitted',
         review_id: reviewId,
         thread_count: threadIds.length,
-        hint: `postil review #${reviewId} is waiting with ${threadIds.length} thread(s). Fetch it with get_review.`,
+        hint: agentHint([reviewId]),
       },
       ['ui', 'agent'],
     );
     return this.review(reviewId);
+  }
+
+  // ------------------------------------------------------------------ agent sessions
+
+  agentConnected(session: string): void {
+    this.liveAgents.set(session, (this.liveAgents.get(session) ?? 0) + 1);
+    this.store.registerListener(session);
+    this.bus.emit({ type: 'agents.changed', listening: this.listeningCount() });
+  }
+
+  agentDisconnected(session: string): void {
+    const n = (this.liveAgents.get(session) ?? 0) - 1;
+    if (n > 0) this.liveAgents.set(session, n);
+    else this.liveAgents.delete(session);
+    this.bus.emit({ type: 'agents.changed', listening: this.listeningCount() });
+  }
+
+  /** Claude sessions whose monitor is connected right now, so a submitted review will wake one. */
+  listeningCount(): number {
+    return this.liveAgents.size;
+  }
+
+  isAgentLive(session: string): boolean {
+    return this.liveAgents.has(session);
+  }
+
+  /** A session asks to be woken for reviews. */
+  listen(session: string): ListenResult {
+    this.store.registerListener(assertSession(session));
+    return { pending: this.pendingReviews().map((r) => r.id) };
+  }
+
+  /**
+   * Take a review for a session. Refused while another session that is still listening holds
+   * it; a review held by a session that went away is free to take over.
+   */
+  private claim(review: ReviewRow, session: string | undefined): void {
+    if (!session) return;
+    assertSession(session);
+    const holder = review.agent_session;
+    if (holder && holder !== session && review.status === 'in_progress' && this.isAgentLive(holder)) {
+      throw new HttpError(409, `review ${review.id} is being handled by another Claude session`, 'claimed_elsewhere');
+    }
+    if (holder !== session) this.store.claimReview(review.id, session);
+  }
+
+  hookStatus(session: string): HookStatus {
+    assertSession(session);
+    const listener = this.store.isListener(session);
+    if (!listener) return { listener, in_progress: [], waiting: [] };
+    const active = this.store.listReviews(['submitted', 'in_progress']);
+    const mine = active.filter((r) => r.status === 'in_progress' && r.agent_session === session);
+    const waiting = active.filter(
+      (r) => r.status === 'submitted' || (r.agent_session !== session && (!r.agent_session || !this.isAgentLive(r.agent_session))),
+    );
+    return {
+      listener,
+      in_progress: mine.map((r) => ({
+        review_id: r.id,
+        unanswered: this.unansweredThreads(r.id).map((t) => ({ thread_id: t.id, path: t.path, start_line: t.start_line, end_line: t.end_line })),
+      })),
+      waiting: waiting.filter((r) => !mine.includes(r)).map((r) => r.id),
+    };
   }
 
   // ------------------------------------------------------------------ agent
@@ -488,9 +564,10 @@ export class Postil {
   }
 
   /** Everything Claude needs to address a review. Fetching it marks the review as in progress. */
-  async reviewForAgent(reviewId: number): Promise<AgentReview> {
+  async reviewForAgent(reviewId: number, session?: string): Promise<AgentReview> {
     const review = this.store.getReview(reviewId);
     if (!review || review.status === 'draft') throw new HttpError(404, `no submitted review ${reviewId}`, 'unknown_review');
+    this.claim(review, session);
     if (this.store.markStarted(reviewId)) this.bus.emit({ type: 'review.started', review_id: reviewId });
 
     const threads = this.store.threadsInReview(reviewId);
@@ -518,7 +595,7 @@ export class Postil {
   }
 
   /** Claude's reply, published immediately so the UI shows progress while it works. */
-  async agentReply(threadId: number, body: string, needsDecision = false): Promise<ThreadView> {
+  async agentReply(threadId: number, body: string, needsDecision = false, session?: string): Promise<ThreadView> {
     requireBody(body);
     const thread = this.store.getThread(threadId);
     if (!thread) throw new HttpError(404, `no thread ${threadId}`, 'unknown_thread');
@@ -532,6 +609,7 @@ export class Postil {
         .map((c) => c.review_id);
       const reviewId = asks.at(-1);
       if (reviewId === undefined) throw new HttpError(409, `thread ${threadId} has no submitted comment to reply to`, 'unpublished_thread');
+      this.claim(this.store.getReview(reviewId)!, session);
       this.store.setNeedsDecision(threadId, needsDecision);
       // A reply proves Claude has picked the review up, even if it never fetched it as a whole.
       const started = this.store.markStarted(reviewId);

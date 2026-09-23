@@ -88,11 +88,12 @@ postil/
   src/db/                 SQLite schema, migrations, Store
   src/core/               Postil service (all review rules), events, discovery, client
   src/server/             Hono HTTP API, WebSocket event feed, server lifecycle
-  src/cli/                `postil` binary: serve | status | url | base  (Phase 3 adds mcp, hook)
+  src/cli/                `postil` binary, MCP server, and hook handlers
   test/                   node:test suites against throwaway repositories
   web/                    Vite + React UI; pure logic in web/src/lib is unit-tested under Node
   e2e/                    Playwright tests that drive the built UI against a real server
-  plugin/                 Phase 3: Claude Code plugin (skill, .mcp.json, hooks)
+  plugin/                 Claude Code plugin: skill, .mcp.json, hooks
+  .claude-plugin/         marketplace.json, so `claude plugin marketplace add <checkout>` works
 ```
 
 ### Server
@@ -193,12 +194,46 @@ Design notes:
   the file changes.
 - Syntax highlighting remains in Phase 5.
 
-### Phase 3: Claude loop
+### Phase 3: Claude loop — DONE 2026-09-23
 
-- MCP stdio proxy and the six tools.
-- Plugin: manifest, skill, hooks.
-- End-to-end: submit, Claude wakes, replies, completes, UI updates live.
-- Stop-hook enforcement and the "needs decision" flag.
+The plugin in `plugin/`, installed through the repository's own marketplace:
+- **Skill `/postil:review`** starts the server, opens the UI, registers the session, arms the
+  Monitor, and holds the procedure for handling a review and re-arming after expiry or restart.
+- **MCP tools** (`mcp__plugin_postil_postil__*`): `connect`, `list_pending`, `get_review`,
+  `get_thread`, `reply`, `complete_review`. Reviews are rendered as Markdown for the model, with the
+  next steps at the end. `apply_suggestion` stays in Phase 4 with the UI's Apply button; until
+  then Claude applies suggestions by editing.
+- **Hooks**: `Stop` blocks a listening session from ending its turn while it owes replies or a
+  completion, or while a review waits; `UserPromptSubmit` adds the same as context;
+  `SessionStart` re-injects the procedure after compaction and asks a resumed session to re-arm.
+- **CLI**: `start`, `stop`, `link`, `mcp`, `hook`; `status` shows whether Claude is listening.
+
+Design decisions made in the phase:
+- **Sessions are identified**, from `CLAUDE_CODE_SESSION_ID`, which Claude Code gives both MCP
+  servers and hooks. `connect` registers the session as a listener, and the monitor URL names it,
+  so the server knows which sessions are listening right now. Hooks act only in listening
+  sessions, so other sessions in the same repository are never blocked.
+- **Reviews are claimed** by the session that fetches them. Another session can take a review over
+  only after the claimer stops listening, so two sessions never work one review.
+- **The doorbell carries the whole procedure**, so a long session whose skill text was compacted
+  away still knows what to do when woken.
+- **`postil` must be on PATH** for the plugin, because installed plugins are copied away from the
+  checkout. `postil link` symlinks it into `~/.local/bin` without sudo.
+- **The UI shows whether Claude is listening**, and a submitted review says "not listening" when
+  nothing will pick it up.
+
+- **Server restarts are survived.** A restart closes the monitor, and the reconnect can land in
+  the gap while the server is down. The session then arms a second, one-shot Monitor on
+  `postil wait`, which exits with one line when the server is back, and re-arms from there.
+
+Verified with real Claude sessions (`e2e/live/`, run by hand since they cost money):
+- Headless: handled a waiting review in 18 seconds, then armed its monitor to keep listening.
+- Interactive, idle at its prompt with nobody typing: listening 8 seconds after `/postil:review`;
+  woken by a review and done in 16 seconds; a follow-up on the same thread done in 8 seconds;
+  re-armed 8 seconds after a server restart; a third review done in 10 seconds. A review that
+  landed as Claude was ending a turn was caught by the Stop hook instead, exercising the fallback.
+- Failure path: with `postil` missing from PATH, Claude explained the problem and gave the
+  `postil link` command instead of failing silently.
 
 ### Phase 4: scope and history
 
@@ -231,3 +266,10 @@ Design notes:
 - The `Monitor` tool is undocumented and could change. Mitigation: hooks give a one-keypress fallback, and the wake-up code is isolated in the skill text, not in the server. The server stays a plain WebSocket publisher, so a replacement transport changes only the skill.
 - Monitor expiry every 30 minutes costs one small turn to re-arm. Acceptable; the skill re-arms silently. It must also re-arm on close, since a server restart ends the watch and the session otherwise goes deaf without saying so.
 - Cross-session permission modes: the monitor event is data, and the skill must make clear Claude still applies the session's normal permission rules when editing.
+- Claude Code "channels" (an MCP server declaring `claude/channel` and sending
+  `notifications/claude/channel`) are a documented alternative to the Monitor with no expiry to
+  re-arm. Not used for now: they are a research preview, each session must be started with a
+  flag, and a custom channel like postil's needs `--dangerously-load-development-channels`.
+  Worth revisiting if that opt-in goes away.
+- Claude Code caches a failed MCP connection for about 15 minutes. A user who installs the plugin
+  before running `postil link` must reconnect with `/mcp` or wait.

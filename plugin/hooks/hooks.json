@@ -1,0 +1,14 @@
+{
+  "description": "postil: remind a listening session of submitted reviews, and keep it from stopping with review threads unanswered. Silent in every other session.",
+  "hooks": {
+    "SessionStart": [
+      { "hooks": [{ "type": "command", "command": "command -v postil >/dev/null 2>&1 && postil hook session-start || true", "timeout": 10 }] }
+    ],
+    "UserPromptSubmit": [
+      { "hooks": [{ "type": "command", "command": "command -v postil >/dev/null 2>&1 && postil hook prompt || true", "timeout": 10 }] }
+    ],
+    "Stop": [
+      { "hooks": [{ "type": "command", "command": "command -v postil >/dev/null 2>&1 && postil hook stop || true", "timeout": 10 }] }
+    ]
+  }
+}

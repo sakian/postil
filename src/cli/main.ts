@@ -5,20 +5,26 @@ import { parseArgs } from 'node:util';
 import { ApiError, NotRunningError, PostilClient } from '../core/client.ts';
 import { AlreadyRunningError } from '../core/discovery.ts';
 import type { BaseInfo, ReviewView } from '../core/postil.ts';
-import { Postil } from '../core/postil.ts';
 import { VERSION } from '../core/version.ts';
-import { startServer } from '../server/server.ts';
+
 
 const USAGE = `postil ${VERSION} — local code review for Claude Code diffs
 
 Usage: postil [-C <dir>] <command> [options]
 
 Commands:
-  serve [--port <n>]       Run the review server for this repository (foreground)
+  start [--port <n>]       Start the review server in the background (or report the running one)
+  stop                     Stop the background server
+  wait [--timeout <s>]     Block until the server is running, then print one line (default 1800s)
+  serve [--port <n>]       Run the review server in the foreground
   status                   Show the running server, base, and reviews
   open                     Open the review UI in your browser
   url [--agent]            Print the browser URL, or Claude's event feed URL
   base [<rev> | --reset]   Show the base that "all changes" is measured from, or change it
+  link [--dir <d>] [--force]
+                           Put \`postil\` on your PATH (default ~/.local/bin) for the Claude Code plugin
+  mcp                      Run the MCP server the Claude Code plugin uses (stdio)
+  hook <event>             Handle a Claude Code hook event (session-start, prompt, stop)
   help                     Show this help
 
 Options:
@@ -38,6 +44,9 @@ async function main(argv: string[]): Promise<number> {
       port: { type: 'string' },
       agent: { type: 'boolean' },
       reset: { type: 'boolean' },
+      dir: { type: 'string' },
+      timeout: { type: 'string' },
+      force: { type: 'boolean' },
       version: { type: 'boolean', short: 'v' },
       help: { type: 'boolean', short: 'h' },
     },
@@ -56,13 +65,57 @@ async function main(argv: string[]): Promise<number> {
 
   switch (command) {
     case 'serve':
-      return serve(cwd, values.port);
+      return serve(cwd, parsePort(values.port));
+    case 'start': {
+      const { startDaemon } = await import('./daemon.ts');
+      const { client, started } = await startDaemon(cwd, parsePort(values.port));
+      console.log(`postil ${started ? 'started' : 'is already running'} for ${client.info.root}`);
+      console.log(`  UI: ${client.uiUrl}`);
+      return 0;
+    }
+    case 'stop': {
+      const { stopDaemon } = await import('./daemon.ts');
+      console.log((await stopDaemon(cwd)) ? 'postil stopped' : 'postil is not running here');
+      return 0;
+    }
+    case 'wait': {
+      // For Claude's Monitor after the server went away: one line when it is back, then exit.
+      const seconds = values.timeout === undefined ? 1800 : Number(values.timeout);
+      if (!Number.isFinite(seconds) || seconds <= 0) throw new UsageError(`invalid timeout: ${values.timeout}`);
+      const deadline = Date.now() + seconds * 1000;
+      for (;;) {
+        try {
+          const client = await PostilClient.connect(cwd, { probeTimeoutMs: 800 });
+          console.log(`postil server is running again for ${client.info.root}: call the postil connect tool and re-arm the monitor`);
+          return 0;
+        } catch (e) {
+          if (!(e instanceof NotRunningError)) throw e;
+        }
+        if (Date.now() >= deadline) {
+          console.log(`postil server did not come back within ${seconds}s; stop listening and tell the user`);
+          return 1;
+        }
+        await new Promise((r) => setTimeout(r, 1000));
+      }
+    }
+    case 'link': {
+      const { linkBinary } = await import('./daemon.ts');
+      const { path, onPath } = await linkBinary(values.dir, values.force ?? false);
+      console.log(`linked ${path}`);
+      if (!onPath) console.log(`note: ${path.replace(/\/postil$/, '')} is not on your PATH; add it so Claude Code can find postil`);
+      return 0;
+    }
+    case 'mcp':
+      await (await import('./mcp.ts')).runMcpServer();
+      return 0;
+    case 'hook':
+      return (await import('./hooks.ts')).runHook(rest[0] ?? '');
     case 'status':
       return status(cwd);
     case 'open':
       return openUi(cwd);
     case 'url': {
-      const client = await PostilClient.connect(cwd);
+      const client = await PostilClient.connect(cwd, { session: process.env.CLAUDE_CODE_SESSION_ID });
       console.log(values.agent ? client.agentEventsUrl : client.uiUrl);
       return 0;
     }
@@ -73,12 +126,15 @@ async function main(argv: string[]): Promise<number> {
   }
 }
 
-async function serve(cwd: string, portArg: string | undefined): Promise<number> {
-  let port: number | undefined;
-  if (portArg !== undefined) {
-    port = Number(portArg);
-    if (!Number.isInteger(port) || port < 0 || port > 65535) throw new UsageError(`invalid port: ${portArg}`);
-  }
+function parsePort(arg: string | undefined): number | undefined {
+  if (arg === undefined) return undefined;
+  const port = Number(arg);
+  if (!Number.isInteger(port) || port < 0 || port > 65535) throw new UsageError(`invalid port: ${arg}`);
+  return port;
+}
+
+async function serve(cwd: string, port: number | undefined): Promise<number> {
+  const { startServer } = await import('../server/server.ts');
   const server = await startServer({ cwd, ...(port !== undefined && { port }) });
   console.log(`postil ${VERSION} serving ${server.info.root}`);
   console.log(`  UI:     ${server.uiUrl}`);
@@ -123,7 +179,8 @@ function describeReview(r: ReviewView): string {
 
 async function status(cwd: string): Promise<number> {
   const client = await PostilClient.connect(cwd);
-  const [base, { reviews }, { draft }] = await Promise.all([
+  const [health, base, { reviews }, { draft }] = await Promise.all([
+    client.request<{ listening: number }>('GET', '/api/health'),
     client.request<BaseInfo>('GET', '/api/base'),
     client.request<{ reviews: ReviewView[] }>('GET', '/api/reviews'),
     client.request<{ draft: ReviewView | null }>('GET', '/api/reviews/draft'),
@@ -132,6 +189,7 @@ async function status(cwd: string): Promise<number> {
   console.log(`postil ${client.info.version} serving ${client.info.root} (pid ${client.info.pid})`);
   console.log(`  UI:       ${client.uiUrl}`);
   console.log(`  base:     ${base.label}${base.warning ? ` (warning: ${base.warning})` : ''}`);
+  console.log(`  Claude:   ${health.listening ? `listening (${health.listening} session${health.listening === 1 ? '' : 's'})` : 'not listening; run /postil:review in Claude Code'}`);
   console.log(`  waiting:  ${active.length ? active.map(describeReview).join(', ') : 'none'}`);
   console.log(`  draft:    ${draft ? `${draft.comment_count} comment(s), not submitted` : 'none'}`);
   return 0;
@@ -149,6 +207,7 @@ async function base(cwd: string, rev: string | undefined, reset: boolean): Promi
         : await client.request<BaseInfo>('GET', '/api/base');
   } catch (e) {
     if (!(e instanceof NotRunningError)) throw e;
+    const { Postil } = await import('../core/postil.ts');
     const postil = await Postil.open(cwd);
     try {
       info = reset ? await postil.resetBase() : rev ? await postil.setBase(rev) : await postil.base();

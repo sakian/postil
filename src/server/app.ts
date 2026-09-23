@@ -85,6 +85,11 @@ function query<T extends z.ZodType>(c: Context, schema: T): z.infer<T> {
   return schema.parse(c.req.query());
 }
 
+/** The Claude Code session making an agent call, from the MCP proxy's header. */
+function session(c: Context): string | undefined {
+  return c.req.header('x-postil-session') || undefined;
+}
+
 function param(c: Context, name: string): number {
   return id.parse(c.req.param(name));
 }
@@ -138,7 +143,9 @@ export function createApp(postil: Postil, opts: AppOptions): Hono {
   app.get('/assets/*', (c) => files.asset(c));
 
   // -------------------------------------------------------------- meta & base
-  app.get('/api/health', (c) => c.json({ ok: true, service: 'postil', version: VERSION, root: postil.repo.root, pid: process.pid }));
+  app.get('/api/health', (c) =>
+    c.json({ ok: true, service: 'postil', version: VERSION, root: postil.repo.root, pid: process.pid, listening: postil.listeningCount() }),
+  );
   app.get('/api/base', async (c) => c.json(await postil.base()));
   app.put('/api/base', async (c) => c.json(await postil.setBase((await json(c, schemas.setBase)).rev)));
   app.post('/api/base/reset', async (c) => c.json(await postil.resetBase()));
@@ -214,14 +221,20 @@ export function createApp(postil: Postil, opts: AppOptions): Hono {
 
   // -------------------------------------------------------------- agent (Claude)
   app.get('/api/agent/pending', (c) => c.json({ reviews: postil.pendingReviews() }));
-  app.get('/api/agent/reviews/:id', async (c) => c.json(await postil.reviewForAgent(param(c, 'id'))));
+  app.post('/api/agent/listen', (c) => {
+    const s = session(c);
+    if (!s) throw new HttpError(400, 'the x-postil-session header is required', 'missing_session');
+    return c.json(postil.listen(s));
+  });
+  app.get('/api/agent/hook-status', (c) => c.json(postil.hookStatus(z.string().min(1).parse(c.req.query('session')))));
+  app.get('/api/agent/reviews/:id', async (c) => c.json(await postil.reviewForAgent(param(c, 'id'), session(c))));
   app.get('/api/agent/reviews/:id/unanswered', (c) => {
     const threads = postil.unansweredThreads(param(c, 'id'));
     return c.json({ threads: threads.map((t) => ({ id: t.id, path: t.path, start_line: t.start_line, end_line: t.end_line })) });
   });
   app.post('/api/agent/threads/:id/reply', async (c) => {
     const b = await json(c, schemas.agentReply);
-    return c.json(await postil.agentReply(param(c, 'id'), b.body, b.needs_decision ?? false), 201);
+    return c.json(await postil.agentReply(param(c, 'id'), b.body, b.needs_decision ?? false, session(c)), 201);
   });
   app.post('/api/agent/reviews/:id/complete', async (c) =>
     c.json(await postil.completeReview(param(c, 'id'), (await json(c, schemas.complete)).summary)),

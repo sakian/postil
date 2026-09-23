@@ -102,4 +102,17 @@ export const MIGRATIONS: readonly string[] = [
     updated_at TEXT NOT NULL
   );
   `,
+  `
+  -- The Claude Code session that picked a review up. Another session may take it over only
+  -- once this one has stopped listening, so two sessions never work on one review at once.
+  ALTER TABLE review ADD COLUMN agent_session TEXT;
+
+  -- Sessions that have asked to be woken for reviews. Hooks act only in these sessions, so an
+  -- unrelated Claude session in the same repository is never blocked or nudged.
+  CREATE TABLE listener (
+    session_id    TEXT PRIMARY KEY,
+    registered_at TEXT NOT NULL,
+    last_seen     TEXT NOT NULL
+  );
+  `,
 ];

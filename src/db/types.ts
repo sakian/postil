@@ -22,6 +22,7 @@ export interface ReviewRow {
   completed_at: string | null;
   submit_tree: string | null;
   complete_tree: string | null;
+  agent_session: string | null;
 }
 
 export interface ThreadRow {

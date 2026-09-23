@@ -1,0 +1,6 @@
+{
+  "postil": {
+    "command": "postil",
+    "args": ["mcp"]
+  }
+}
