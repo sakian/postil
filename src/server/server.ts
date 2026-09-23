@@ -1,5 +1,6 @@
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
+import { fileURLToPath } from 'node:url';
 import { getRequestListener } from '@hono/node-server';
 import {
   acquireLock, lastPort, loadOrCreateToken, rememberPort, removeServerInfo, writeServerInfo, type ServerInfo,
@@ -18,7 +19,11 @@ export interface ServeOptions {
   /** How often to look for working-tree changes while a browser is connected. */
   pollMs?: number;
   heartbeatMs?: number;
+  /** Built UI directory. Defaults to web/dist in this checkout. */
+  webRoot?: string;
 }
+
+export const DEFAULT_WEB_ROOT = fileURLToPath(new URL('../../web/dist', import.meta.url));
 
 export interface RunningServer {
   info: ServerInfo;
@@ -52,7 +57,7 @@ export async function startServer(opts: ServeOptions): Promise<RunningServer> {
     const token = await loadOrCreateToken(stateDir);
 
     let port = 0;
-    const app = createApp(postil, { token, allowedHosts: () => allowedHostsFor(port) });
+    const app = createApp(postil, { token, webRoot: opts.webRoot ?? DEFAULT_WEB_ROOT, allowedHosts: () => allowedHostsFor(port) });
     const server = createServer(getRequestListener(app.fetch));
 
     const preferred = opts.port ?? (await lastPort(stateDir));
@@ -98,7 +103,7 @@ export async function startServer(opts: ServeOptions): Promise<RunningServer> {
       info,
       postil,
       events,
-      uiUrl: `${url}/?token=${token}`,
+      uiUrl: `${url}/#token=${token}`,
       agentEventsUrl: `ws://127.0.0.1:${port}/events?channel=agent&token=${token}`,
       async close() {
         if (closed) return;

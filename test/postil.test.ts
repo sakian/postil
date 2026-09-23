@@ -331,6 +331,17 @@ describe('drafts, anchors and validation', () => {
     }
   });
 
+  it('treats a reply as Claude picking the review up', async () => {
+    try {
+      const t = await postil.createThread({ from_tree: from, to_tree: to, path: 'keep.txt', side: 'new', start_line: 3, body: 'x' });
+      const r = await postil.submitReview();
+      await postil.agentReply(t.id, 'on it');
+      assert.equal(postil.review(r.id).status, 'in_progress');
+    } finally {
+      cleanup();
+    }
+  });
+
   it('will not let Claude reply to a thread the user has not submitted', async () => {
     try {
       const t = await postil.createThread({ from_tree: from, to_tree: to, path: 'keep.txt', side: 'new', start_line: 3, body: 'draft only' });

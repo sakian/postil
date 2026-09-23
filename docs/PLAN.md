@@ -90,7 +90,8 @@ postil/
   src/server/             Hono HTTP API, WebSocket event feed, server lifecycle
   src/cli/                `postil` binary: serve | status | url | base  (Phase 3 adds mcp, hook)
   test/                   node:test suites against throwaway repositories
-  web/                    Phase 2: Vite + React UI, built to static files the server serves
+  web/                    Vite + React UI; pure logic in web/src/lib is unit-tested under Node
+  e2e/                    Playwright tests that drive the built UI against a real server
   plugin/                 Phase 3: Claude Code plugin (skill, .mcp.json, hooks)
 ```
 
@@ -166,11 +167,31 @@ changes made during the phase:
   edits, rebases and gc. This is what the Phase 4 old-vs-new view will be built on.
 - The agent event channel is separate from the UI channel, and its greeting lists missed reviews.
 
-### Phase 2: UI MVP
+### Phase 2: UI MVP — DONE 2026-09-23
 
-- File tree, diff view (inline and split, toggle), gap expansion and recollapse, line-range selection, draft comments, submit review, threads panel, resolve, file viewed.
-- Draft and UI state persistence.
-- Markdown rendering with code and suggestion fences (render only; apply comes in Phase 4).
+Everything planned: file tree, unified and split views with a one-key toggle (`S`), gap expansion
+and recollapse, drag-to-select line ranges, draft comments, submit, the conversations list,
+resolve, viewed files, Markdown with rendered suggestion blocks, and server-side persistence of
+layout, scope, expansion and tree state. Verified by 15 Playwright tests in headless Chromium.
+
+Pulled forward from later phases because they were cheap once the pieces existed:
+- **Outdated comments stay in the diff (from Phase 4).** A thread whose code changed shows at the
+  top of its file with an Outdated chip and the original lines. Full re-anchoring is still Phase 4.
+- **A simple scope picker (from Phase 4):** all changes, uncommitted, and since any review. The
+  commit-range picker is still Phase 4.
+- **Tree collapse-all and expand-all, file expand-all and collapse-all (from Phase 5).**
+- **`postil open` (from Phase 5).**
+- **Live Claude status in the header:** "Waiting for Claude" until a session picks the review up,
+  which makes a session that is not listening visible.
+
+Design notes:
+- The token travels in the URL fragment, is kept in `localStorage` (scoped to host and port),
+  and is scrubbed from the address bar. The page runs under a strict content security policy.
+- Diffs load lazily as files approach the viewport, which covers large reviews until Phase 5
+  adds virtualised rendering.
+- Expansion state is keyed by the new blob id, so it survives reloads and resets by itself when
+  the file changes.
+- Syntax highlighting remains in Phase 5.
 
 ### Phase 3: Claude loop
 

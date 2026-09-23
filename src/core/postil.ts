@@ -1,131 +1,19 @@
 import { createHash } from 'node:crypto';
 import { join } from 'node:path';
 import { Store } from '../db/store.ts';
-import type { Author, CommentRow, ReviewRow, Side, ThreadRow } from '../db/types.ts';
+import type { CommentRow, ReviewRow, Side, ThreadRow } from '../db/types.ts';
 import { splitLines } from '../git/parse.ts';
 import { assertOid, Repo } from '../git/repo.ts';
-import type { Commit, FileChange, Hunk } from '../git/types.ts';
+import type { FileChange } from '../git/types.ts';
 import { EventBus } from './events.ts';
 import { HttpError } from './util.ts';
 
-// ---------------------------------------------------------------------------- public shapes
+import type {
+  AgentReview, AgentThread, BaseConfig, BaseInfo, CommentView, CommitsInfo, Endpoint, FileDiff, NewThreadInput,
+  ResolvedScope, ReviewView, Scope, ThreadView,
+} from './api-types.ts';
 
-export type BaseConfig =
-  | { mode: 'merge-base'; target: string }
-  | { mode: 'commit'; commit: string | null };
-
-export interface BaseInfo {
-  config: BaseConfig;
-  /** The commit the base resolves to right now; null means the empty tree. */
-  commit: string | null;
-  tree: string;
-  label: string;
-  /** Set when the configured base could not be resolved and the empty tree was used instead. */
-  warning?: string;
-}
-
-export type Scope =
-  | { kind: 'all' }
-  | { kind: 'uncommitted' }
-  | { kind: 'since_review'; review_id?: number }
-  | { kind: 'commits'; from: string; to: string }
-  | { kind: 'trees'; from: string; to: string };
-
-/** One side of a resolved diff. Trees are immutable, so a view pinned to them never shifts under the user. */
-export interface Endpoint {
-  tree: string;
-  commit: string | null;
-  label: string;
-  /** True when this is the working tree as of resolution time. */
-  live: boolean;
-}
-
-export interface ResolvedScope {
-  scope: Scope;
-  from: Endpoint;
-  to: Endpoint;
-}
-
-export interface FileDiff {
-  old_blob: string | null;
-  new_blob: string | null;
-  binary: boolean;
-  too_large: boolean;
-  old_lines: number | null;
-  new_lines: number | null;
-  hunks: Hunk[];
-}
-
-export interface CommentView {
-  id: number;
-  review_id: number;
-  author: Author;
-  body: string;
-  draft: boolean;
-  created_at: string;
-  updated_at: string;
-}
-
-export interface ThreadView {
-  id: number;
-  path: string;
-  side: Side;
-  start_line: number | null;
-  end_line: number | null;
-  blob: string;
-  from_tree: string;
-  to_tree: string;
-  anchor_text: string;
-  status: 'open' | 'resolved';
-  needs_decision: boolean;
-  /** False while every comment is still a draft. */
-  published: boolean;
-  /** Whose turn it is. Null when resolved or unpublished. */
-  awaiting: Author | null;
-  created_at: string;
-  resolved_at: string | null;
-  comments: CommentView[];
-}
-
-export interface ReviewView extends ReviewRow {
-  thread_ids: number[];
-  comment_count: number;
-}
-
-export interface NewThreadInput {
-  from_tree: string;
-  to_tree: string;
-  path: string;
-  side: Side;
-  start_line?: number | null;
-  end_line?: number | null;
-  body: string;
-}
-
-export interface AgentThread {
-  id: number;
-  path: string;
-  side: Side;
-  start_line: number | null;
-  end_line: number | null;
-  anchor_text: string;
-  status: 'open' | 'resolved';
-  needs_decision: boolean;
-  /** True when this review still needs a reply from Claude on this thread. */
-  awaiting_reply: boolean;
-  /** True when the file on disk differs from the version the comment was written on. */
-  file_changed_since_comment: boolean;
-  file_exists: boolean;
-  comments: Array<{ id: number; author: Author; body: string; created_at: string; in_this_review: boolean }>;
-}
-
-export interface AgentReview {
-  id: number;
-  status: ReviewRow['status'];
-  body: string;
-  submitted_at: string | null;
-  threads: AgentThread[];
-}
+export type * from './api-types.ts';
 
 // ---------------------------------------------------------------------------- limits
 
@@ -320,7 +208,7 @@ export class Postil {
     }
   }
 
-  async commits(): Promise<{ base: BaseInfo; head: string | null; branch: string | null; commits: Commit[]; uncommitted: boolean }> {
+  async commits(): Promise<CommitsInfo> {
     const [base, head, branch] = await Promise.all([this.base(), this.repo.head(), this.repo.currentBranch()]);
     const commits = head ? await this.repo.log(base.commit, head) : [];
     const headTree = head ? await this.repo.resolveTree(head) : await this.repo.emptyTree();
@@ -645,9 +533,12 @@ export class Postil {
       const reviewId = asks.at(-1);
       if (reviewId === undefined) throw new HttpError(409, `thread ${threadId} has no submitted comment to reply to`, 'unpublished_thread');
       this.store.setNeedsDecision(threadId, needsDecision);
-      return this.store.insertComment({ thread_id: threadId, review_id: reviewId, author: 'claude', body, draft: false });
+      // A reply proves Claude has picked the review up, even if it never fetched it as a whole.
+      const started = this.store.markStarted(reviewId);
+      return { ...this.store.insertComment({ thread_id: threadId, review_id: reviewId, author: 'claude', body, draft: false }), started };
     });
 
+    if (comment.started) this.bus.emit({ type: 'review.started', review_id: comment.review_id });
     this.bus.emit({ type: 'thread.replied', thread_id: threadId, review_id: comment.review_id, comment_id: comment.id, needs_decision: needsDecision });
     await this.liveTree(); // Claude has probably just edited files; let the UI know promptly.
     return this.thread(threadId);

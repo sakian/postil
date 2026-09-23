@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { spawn } from 'node:child_process';
 import { resolve } from 'node:path';
 import { parseArgs } from 'node:util';
 import { ApiError, NotRunningError, PostilClient } from '../core/client.ts';
@@ -15,6 +16,7 @@ Usage: postil [-C <dir>] <command> [options]
 Commands:
   serve [--port <n>]       Run the review server for this repository (foreground)
   status                   Show the running server, base, and reviews
+  open                     Open the review UI in your browser
   url [--agent]            Print the browser URL, or Claude's event feed URL
   base [<rev> | --reset]   Show the base that "all changes" is measured from, or change it
   help                     Show this help
@@ -57,6 +59,8 @@ async function main(argv: string[]): Promise<number> {
       return serve(cwd, values.port);
     case 'status':
       return status(cwd);
+    case 'open':
+      return openUi(cwd);
     case 'url': {
       const client = await PostilClient.connect(cwd);
       console.log(values.agent ? client.agentEventsUrl : client.uiUrl);
@@ -92,6 +96,23 @@ async function serve(cwd: string, portArg: string | undefined): Promise<number> 
     process.once('SIGINT', () => stop('SIGINT'));
     process.once('SIGTERM', () => stop('SIGTERM'));
   });
+  return 0;
+}
+
+async function openUi(cwd: string): Promise<number> {
+  const client = await PostilClient.connect(cwd);
+  const url = client.uiUrl;
+  const [cmd, args] =
+    process.platform === 'darwin' ? ['open', [url]] : process.platform === 'win32' ? ['cmd', ['/c', 'start', '', url]] : ['xdg-open', [url]];
+  const opened = await new Promise<boolean>((done) => {
+    const child = spawn(cmd, args, { stdio: 'ignore', detached: true });
+    child.once('error', () => done(false));
+    child.once('spawn', () => {
+      child.unref();
+      done(true);
+    });
+  });
+  if (!opened) console.log(`Could not launch a browser. Open this URL:\n${url}`);
   return 0;
 }
 

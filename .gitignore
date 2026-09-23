@@ -1,6 +1,6 @@
 node_modules/
 dist/
-.postil/
 *.log
 *.out
 .DS_Store
+e2e/screenshots/

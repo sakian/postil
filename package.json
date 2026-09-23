@@ -13,19 +13,32 @@
   },
   "scripts": {
     "postil": "node src/cli/main.ts",
-    "typecheck": "tsc -p .",
+    "build": "vite build --config web/vite.config.ts",
+    "dev:web": "vite --config web/vite.config.ts",
+    "typecheck": "tsc -p . && tsc -p web",
     "test": "node --test --test-reporter=spec 'test/**/*.test.ts'",
+    "test:e2e": "node --test --test-reporter=spec 'e2e/**/*.e2e.ts'",
     "check": "npm run typecheck && npm test"
   },
   "dependencies": {
     "@hono/node-server": "^2.1.1",
     "hono": "^4.13.8",
+    "react": "^19.3.0",
+    "react-dom": "^19.3.0",
+    "react-markdown": "^10.1.0",
+    "remark-gfm": "^4.0.1",
     "ws": "^8.21.3",
-    "zod": "^4.6.5"
+    "zod": "^4.6.5",
+    "zustand": "^5.0.15"
   },
   "devDependencies": {
     "@types/node": "^24.13.6",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
     "@types/ws": "^8.18.1",
-    "typescript": "^7.0.2"
+    "@vitejs/plugin-react": "^6.1.1",
+    "playwright": "^1.63.0",
+    "typescript": "^7.0.2",
+    "vite": "^8.3.0"
   }
 }

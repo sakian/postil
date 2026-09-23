@@ -6,9 +6,12 @@ import type { Postil } from '../core/postil.ts';
 import { HttpError } from '../core/util.ts';
 import { VERSION } from '../core/version.ts';
 import { GitError } from '../git/exec.ts';
+import { createStatic } from './static.ts';
 
 export interface AppOptions {
   token: string;
+  /** Directory holding the built UI (index.html and assets/). */
+  webRoot: string;
   /** Host header values this server answers to. Anything else is a DNS-rebinding attempt. */
   allowedHosts: () => readonly string[];
 }
@@ -97,7 +100,7 @@ export function createApp(postil: Postil, opts: AppOptions): Hono {
       return c.json({ error: { code: 'bad_host', message: 'unrecognised Host header' } }, 403);
     }
     await next();
-    c.header('cache-control', 'no-store');
+    if (!c.res.headers.has('cache-control')) c.header('cache-control', 'no-store');
     c.header('x-content-type-options', 'nosniff');
   });
 
@@ -130,12 +133,9 @@ export function createApp(postil: Postil, opts: AppOptions): Hono {
 
   app.notFound((c) => c.json({ error: { code: 'not_found', message: `no route for ${c.req.method} ${c.req.path}` } }, 404));
 
-  app.get('/', (c) =>
-    c.html(`<!doctype html><meta charset="utf-8"><title>postil</title>
-<body style="font:14px system-ui;margin:2rem;max-width:40rem">
-<h1>postil</h1><p>The review server is running for <code>${escapeHtml(postil.repo.root)}</code>.</p>
-<p>The browser UI arrives in Phase 2. The JSON API is under <code>/api</code>.</p></body>`),
-  );
+  const files = createStatic(opts.webRoot);
+  app.get('/', (c) => files.index(c));
+  app.get('/assets/*', (c) => files.asset(c));
 
   // -------------------------------------------------------------- meta & base
   app.get('/api/health', (c) => c.json({ ok: true, service: 'postil', version: VERSION, root: postil.repo.root, pid: process.pid }));
@@ -228,8 +228,4 @@ export function createApp(postil: Postil, opts: AppOptions): Hono {
   );
 
   return app;
-}
-
-function escapeHtml(s: string): string {
-  return s.replace(/[&<>"']/g, (ch) => `&#${ch.charCodeAt(0)};`);
 }

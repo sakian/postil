@@ -39,7 +39,7 @@ export class PostilClient {
   }
 
   get uiUrl(): string {
-    return `${this.info.url}/?token=${this.info.token}`;
+    return `${this.info.url}/#token=${this.info.token}`;
   }
 
   get agentEventsUrl(): string {
