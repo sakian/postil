@@ -1,6 +1,6 @@
 {
   "postil": {
-    "command": "postil",
-    "args": ["mcp"]
+    "command": "node",
+    "args": ["${CLAUDE_PLUGIN_ROOT}/dist/postil.mjs", "mcp"]
   }
 }

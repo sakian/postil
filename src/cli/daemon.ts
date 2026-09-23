@@ -2,12 +2,12 @@ import { spawn } from 'node:child_process';
 import { lstat, mkdir, open, readFile, readlink, realpath, symlink } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { delimiter, join, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { CLI_ENTRY } from '../core/build-info.ts';
 import { NotRunningError, PostilClient } from '../core/client.ts';
 import { pidAlive, probe } from '../core/discovery.ts';
 import { Repo } from '../git/repo.ts';
 
-const MAIN = fileURLToPath(new URL('./main.ts', import.meta.url));
+const MAIN = CLI_ENTRY;
 
 async function tryConnect(cwd: string): Promise<PostilClient | null> {
   try {
@@ -86,4 +86,24 @@ export async function linkBinary(dir = join(homedir(), '.local', 'bin'), force =
 function onPath(dir: string): boolean {
   const want = resolve(dir);
   return (process.env.PATH ?? '').split(delimiter).some((p) => p && resolve(p) === want);
+}
+
+/** Open a URL in the user's browser. Resolves false when no browser could be launched. */
+export function openBrowser(url: string): Promise<boolean> {
+  const [cmd, args] =
+    process.platform === 'darwin' ? ['open', [url]] : process.platform === 'win32' ? ['cmd', ['/c', 'start', '', url]] : ['xdg-open', [url]];
+  return new Promise<boolean>((done) => {
+    const child = spawn(cmd, args as string[], { stdio: 'ignore', detached: true });
+    child.once('error', () => done(false));
+    child.once('spawn', () => {
+      child.unref();
+      done(true);
+    });
+  });
+}
+
+/** The command a Monitor runs to be told when the server is back, with no reliance on PATH. */
+export function waitCommand(repoRoot: string): string {
+  const q = (s: string) => `'${s.replace(/'/g, `'\\''`)}'`;
+  return `${q(process.execPath)} ${q(MAIN)} -C ${q(repoRoot)} wait`;
 }

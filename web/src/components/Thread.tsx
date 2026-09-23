@@ -9,6 +9,8 @@ import { Markdown, type ApplyState } from './Markdown.tsx';
 // ---------------------------------------------------------------------------- composer
 
 interface ComposerProps {
+  /** Identifies this composer's unsent text in the store, e.g. `reply:12`. */
+  draftKey: string;
   initial?: string;
   placeholder: string;
   submitLabel: string;
@@ -19,8 +21,13 @@ interface ComposerProps {
   onCancel?(): void;
 }
 
-export function Composer({ initial = '', placeholder, submitLabel, seed, autoFocus, onSubmit, onCancel }: ComposerProps) {
-  const [body, setBody] = useState(initial);
+export function Composer({ draftKey, initial = '', placeholder, submitLabel, seed, autoFocus, onSubmit, onCancel }: ComposerProps) {
+  const stored = useStore((s) => s.composerText[draftKey]);
+  const { setComposerText } = useStore.getState();
+  const body = stored ?? initial;
+  const setBody = (next: string | ((prev: string) => string)) =>
+    setComposerText(draftKey, typeof next === 'function' ? next(useStore.getState().composerText[draftKey] ?? initial) : next);
+  const cancel = onCancel && (() => { setComposerText(draftKey, null); onCancel(); });
   const [preview, setPreview] = useState(false);
   const [busy, setBusy] = useState(false);
   const ref = useRef<HTMLTextAreaElement>(null);
@@ -34,7 +41,7 @@ export function Composer({ initial = '', placeholder, submitLabel, seed, autoFoc
     setBusy(true);
     try {
       await onSubmit(body);
-      setBody('');
+      setComposerText(draftKey, null);
       setPreview(false);
     } catch {
       /* the store already reported it; keep the text so nothing is lost */
@@ -47,9 +54,9 @@ export function Composer({ initial = '', placeholder, submitLabel, seed, autoFoc
     if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
       e.preventDefault();
       void submit();
-    } else if (e.key === 'Escape' && onCancel) {
+    } else if (e.key === 'Escape' && cancel) {
       e.preventDefault();
-      onCancel();
+      cancel();
     }
   };
 
@@ -81,7 +88,7 @@ export function Composer({ initial = '', placeholder, submitLabel, seed, autoFoc
       )}
       <div className="composer-actions">
         <span className="hint">Markdown supported. Ctrl+Enter to save.</span>
-        {onCancel && <button className="btn" onClick={onCancel}>Cancel</button>}
+        {cancel && <button className="btn" onClick={cancel}>Cancel</button>}
         <button className="btn btn-primary" disabled={!body.trim() || busy} onClick={() => void submit()}>{submitLabel}</button>
       </div>
     </div>
@@ -96,7 +103,7 @@ export function NewThreadComposer({ target, seed }: { target: Target; seed: stri
       <div className="thread-head">
         <span className="muted">Comment on {target.side === 'old' ? 'removed ' : ''}{label}</span>
       </div>
-      <Composer autoFocus placeholder="Leave a comment" submitLabel="Add review comment" seed={seed}
+      <Composer draftKey={`new:${target.path}:${target.side}:${target.start}-${target.end}`} autoFocus placeholder="Leave a comment" submitLabel="Add review comment" seed={seed}
         onSubmit={(body) => createThread(target, body)} onCancel={() => openComposer(null)} />
     </div>
   );
@@ -116,7 +123,7 @@ function applyState(comment: CommentView, thread: ThreadView, run: () => Promise
 }
 
 function Comment({ comment, thread }: { comment: CommentView; thread: ThreadView }) {
-  const [editing, setEditing] = useState(false);
+  const [editing, setEditing] = useState(() => useStore.getState().composerText[`edit:${comment.id}`] !== undefined);
   const { editComment, deleteComment, applySuggestion } = useStore.getState();
   const who = comment.author === 'claude' ? 'Claude' : 'You';
   const suggestionBase = thread.side === 'new' && thread.start_line !== null ? thread.anchor_text : null;
@@ -138,7 +145,7 @@ function Comment({ comment, thread }: { comment: CommentView; thread: ThreadView
         )}
       </div>
       {editing ? (
-        <Composer initial={comment.body} autoFocus placeholder="Edit comment" submitLabel="Update comment"
+        <Composer draftKey={`edit:${comment.id}`} initial={comment.body} autoFocus placeholder="Edit comment" submitLabel="Update comment"
           seed={suggestionBase} onSubmit={async (b) => { await editComment(comment.id, b); setEditing(false); }}
           onCancel={() => setEditing(false)} />
       ) : (
@@ -186,7 +193,7 @@ function WhatChanged({ before, after }: { before: string; after: string }) {
 
 export function ThreadWidget({ thread, showLocation = false }: { thread: ThreadView; showLocation?: boolean }) {
   const [open, setOpen] = useState(thread.status !== 'resolved');
-  const [replying, setReplying] = useState(false);
+  const [replying, setReplying] = useState(() => useStore.getState().composerText[`reply:${thread.id}`] !== undefined);
   const [showChange, setShowChange] = useState(false);
   const outdated = isOutdated(thread);
   const moved = thread.anchor?.state === 'moved';
@@ -233,7 +240,7 @@ export function ThreadWidget({ thread, showLocation = false }: { thread: ThreadV
           {thread.comments.map((c) => <Comment key={c.id} comment={c} thread={thread} />)}
           <div className="thread-actions">
             {replying ? (
-              <Composer autoFocus placeholder="Reply" submitLabel="Add reply"
+              <Composer draftKey={`reply:${thread.id}`} autoFocus placeholder="Reply" submitLabel="Add reply"
                 seed={thread.side === 'new' && thread.start_line !== null ? thread.anchor_text : null}
                 onSubmit={async (b) => { await reply(thread.id, b); setReplying(false); }} onCancel={() => setReplying(false)} />
             ) : (

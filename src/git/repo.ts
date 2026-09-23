@@ -1,5 +1,5 @@
 import { copyFile, mkdir, rm, stat } from 'node:fs/promises';
-import { join } from 'node:path';
+import { basename, join, resolve as resolvePath } from 'node:path';
 import { ByteLru, HttpError, Mutex } from '../core/util.ts';
 import { git, GitError, gitLine, gitText, type GitRunOptions } from './exec.ts';
 import {
@@ -31,8 +31,12 @@ export function assertRev(value: string): string {
 }
 
 /** Namespace for refs that keep postil's snapshot trees alive through `git gc`. */
-export const PIN_PREFIX = 'refs/postil/trees/';
-export const PIN_BLOB_PREFIX = 'refs/postil/blobs/';
+/**
+ * Pins live under refs/postil/<worktree>/, one namespace per worktree. Linked worktrees share
+ * the repository's refs, and a shared namespace would let one worktree's prune release what
+ * another worktree still needs.
+ */
+export const PIN_ROOT = 'refs/postil/';
 
 export interface TreeEntry {
   mode: string;
@@ -65,9 +69,22 @@ export class Repo {
   /** Absolute git dir for this worktree (per-worktree for linked worktrees). */
   readonly gitDir: string;
 
-  private constructor(root: string, gitDir: string) {
+  /** This worktree's pin namespace: "main", or the name git gave a linked worktree. */
+  readonly worktreeId: string;
+
+  private constructor(root: string, gitDir: string, commonDir: string) {
     this.root = root;
     this.gitDir = gitDir;
+    // A linked worktree's git dir is <common>/worktrees/<name>; the name survives moving the checkout.
+    this.worktreeId = resolvePath(gitDir) === resolvePath(commonDir) ? 'main' : `wt-${basename(gitDir)}`;
+  }
+
+  private get treePins(): string {
+    return `${PIN_ROOT}${this.worktreeId}/trees/`;
+  }
+
+  private get blobPins(): string {
+    return `${PIN_ROOT}${this.worktreeId}/blobs/`;
   }
 
   /** Postil state lives in the git dir: `git clean -fdx` cannot reach it and snapshots cannot capture it. */
@@ -78,14 +95,14 @@ export class Repo {
   static async open(cwd: string): Promise<Repo> {
     let out: string;
     try {
-      out = await gitText(cwd, ['rev-parse', '--show-toplevel', '--absolute-git-dir']);
+      out = await gitText(cwd, ['rev-parse', '--path-format=absolute', '--show-toplevel', '--absolute-git-dir', '--git-common-dir']);
     } catch (e) {
       if (e instanceof GitError) throw new Error(`not inside a git working tree: ${cwd}`);
       throw e;
     }
-    const [root, gitDir] = out.trim().split('\n');
-    if (!root || !gitDir) throw new Error(`could not locate the repository from ${cwd}`);
-    const repo = new Repo(root, gitDir);
+    const [root, gitDir, commonDir] = out.trim().split('\n');
+    if (!root || !gitDir || !commonDir) throw new Error(`could not locate the repository from ${cwd}`);
+    const repo = new Repo(root, gitDir, commonDir);
     await mkdir(repo.stateDir, { recursive: true, mode: 0o700 });
     return repo;
   }
@@ -288,32 +305,32 @@ export class Repo {
   /** Keep a tree alive through `git gc`. Idempotent. Refs to trees stay out of `git log --all`. */
   async pin(tree: string): Promise<void> {
     assertOid(tree, 'tree id');
-    await git(this.root, ['update-ref', `${PIN_PREFIX}${tree}`, tree]);
+    await git(this.root, ['update-ref', `${this.treePins}${tree}`, tree]);
   }
 
   async unpin(tree: string): Promise<void> {
     assertOid(tree, 'tree id');
-    await git(this.root, ['update-ref', '-d', `${PIN_PREFIX}${tree}`]);
+    await git(this.root, ['update-ref', '-d', `${this.treePins}${tree}`]);
   }
 
   /** Keep a blob alive through `git gc`, as for a section mark on a version never snapshotted. */
   async pinBlob(blob: string): Promise<void> {
     assertOid(blob, 'blob id');
-    await git(this.root, ['update-ref', `${PIN_BLOB_PREFIX}${blob}`, blob]);
+    await git(this.root, ['update-ref', `${this.blobPins}${blob}`, blob]);
   }
 
   async unpinBlob(blob: string): Promise<void> {
     assertOid(blob, 'blob id');
-    await git(this.root, ['update-ref', '-d', `${PIN_BLOB_PREFIX}${blob}`]);
+    await git(this.root, ['update-ref', '-d', `${this.blobPins}${blob}`]);
   }
 
   async pinnedBlobs(): Promise<string[]> {
-    const out = await gitText(this.root, ['for-each-ref', '--format=%(objectname)', PIN_BLOB_PREFIX]);
+    const out = await gitText(this.root, ['for-each-ref', '--format=%(objectname)', this.blobPins]);
     return out.split('\n').filter((l) => l !== '');
   }
 
   async pinnedTrees(): Promise<string[]> {
-    const out = await gitText(this.root, ['for-each-ref', '--format=%(objectname)', PIN_PREFIX]);
+    const out = await gitText(this.root, ['for-each-ref', '--format=%(objectname)', this.treePins]);
     return out.split('\n').filter((l) => l !== '');
   }
 

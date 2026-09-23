@@ -13,12 +13,13 @@
   },
   "scripts": {
     "postil": "node src/cli/main.ts",
-    "build": "vite build --config web/vite.config.ts",
+    "build": "vite build --config web/vite.config.ts && node scripts/build-plugin.ts",
     "dev:web": "vite --config web/vite.config.ts",
-    "typecheck": "tsc -p . && tsc -p web",
+    "typecheck": "tsc -p . && tsc -p web && tsc -p e2e",
     "test": "node --test --test-reporter=spec 'test/**/*.test.ts'",
     "test:e2e": "node --test --test-reporter=spec 'e2e/**/*.e2e.ts'",
-    "check": "npm run typecheck && npm test"
+    "check": "npm run typecheck && npm test",
+    "install-plugin": "node scripts/install-plugin.ts"
   },
   "dependencies": {
     "@hono/node-server": "^2.1.1",
@@ -39,6 +40,7 @@
     "@types/react-dom": "^19.3.0",
     "@types/ws": "^8.18.1",
     "@vitejs/plugin-react": "^6.1.1",
+    "esbuild": "^0.28.2",
     "playwright": "^1.63.0",
     "typescript": "^7.0.2",
     "vite": "^8.3.0"

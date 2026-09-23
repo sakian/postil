@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { lstat, readFile, rename, writeFile } from 'node:fs/promises';
+import { lstat, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { join, resolve, sep } from 'node:path';
 import { Store } from '../db/store.ts';
 import type { CommentRow, ReviewRow, SectionMarkRow, Side, ThreadRow } from '../db/types.ts';
@@ -26,6 +26,10 @@ export type * from './api-types.ts';
 
 const MAX_BODY = 64 * 1024;
 const MAX_DIFF_BLOB = 4 * 1024 * 1024;
+/** A diff line longer than this suggests minified or generated code, which is not worth rendering unasked. */
+const MAX_DIFF_LINE = 20_000;
+const SNAPSHOT_SETTLE_MS = 120;
+const SNAPSHOT_SETTLE_TRIES = 5;
 const MAX_LINES_PER_REQUEST = 10_000;
 const MAX_UI_STATE = 256 * 1024;
 const UI_KEY = /^[\w.:-]{1,128}$/;
@@ -160,9 +164,18 @@ export class Postil {
     this.store.upsertSnapshot(tree, await this.repo.head(), reason);
   }
 
-  /** Pin the current working tree and return its id. */
+  /**
+   * Pin the current working tree and return its id. Claude may be halfway through writing a file
+   * at this moment, so wait until two reads a moment apart agree before trusting the tree.
+   */
   async snapshot(reason: string): Promise<string> {
-    const tree = await this.liveTree();
+    let tree = await this.liveTree();
+    for (let i = 0; i < SNAPSHOT_SETTLE_TRIES; i++) {
+      await new Promise((r) => setTimeout(r, SNAPSHOT_SETTLE_MS));
+      const again = await this.liveTree();
+      if (again === tree) break;
+      tree = again;
+    }
     await this.pinTree(tree, reason);
     return tree;
   }
@@ -246,14 +259,17 @@ export class Postil {
     newBlob: string | null,
     opts: { context?: number; ignoreWhitespace?: boolean; force?: boolean } = {},
   ): Promise<FileDiff> {
+    const nothing = { old_blob: oldBlob, new_blob: newBlob, binary: false, old_lines: null, new_lines: null, hunks: [] };
+    // Same content on both sides (a pure rename or mode change): no need to read either blob.
+    if (oldBlob !== null && oldBlob === newBlob) return { ...nothing, too_large: false };
     const sizes = await Promise.all([oldBlob, newBlob].map((b) => (b ? this.repo.blobSize(b) : 0)));
-    const tooLarge = !opts.force && sizes.some((s) => s > MAX_DIFF_BLOB);
-    const info = async (b: string | null) => (b && !tooLarge ? (await this.repo.blobInfo(b)).lines : null);
+    if (!opts.force && sizes.some((s) => s > MAX_DIFF_BLOB)) return { ...nothing, too_large: true, too_large_reason: 'size' };
+    const info = async (b: string | null) => (b ? (await this.repo.blobInfo(b)).lines : null);
     const [oldLines, newLines] = await Promise.all([info(oldBlob), info(newBlob)]);
-    if (tooLarge) {
-      return { old_blob: oldBlob, new_blob: newBlob, binary: false, too_large: true, old_lines: null, new_lines: null, hunks: [] };
-    }
     const parsed = await this.repo.diffBlobs(oldBlob, newBlob, opts);
+    if (!opts.force && parsed.hunks.some((h) => h.lines.some((l) => l.text.length > MAX_DIFF_LINE))) {
+      return { ...nothing, too_large: true, too_large_reason: 'long_lines' };
+    }
     return {
       old_blob: oldBlob, new_blob: newBlob, binary: parsed.binary, too_large: false,
       old_lines: parsed.binary ? null : oldLines,
@@ -411,7 +427,14 @@ export class Postil {
     // Re-check against the bytes on disk: the snapshot above may already be a moment old.
     // Compare without carriage returns: git may store LF while the disk has CRLF (core.autocrlf), or
     // store CRLF as-is, so either side can carry them.
-    const text = await readFile(file, 'utf8');
+    const original = await readFile(file);
+    let text: string;
+    try {
+      // Rewriting a file that is not UTF-8 through a string would corrupt every other line in it.
+      text = new TextDecoder('utf-8', { fatal: true }).decode(original);
+    } catch {
+      throw new HttpError(422, `${anchor.path} is not UTF-8 text, so the suggestion cannot be applied safely`, 'not_utf8');
+    }
     const bare = (lines: string) => lines.split('\n').map((l) => l.replace(/\r$/, '')).join('\n');
     const current = text.split('\n').slice(anchor.start_line - 1, anchor.end_line).join('\n');
     if (bare(current) !== bare(thread.anchor_text)) {
@@ -419,6 +442,11 @@ export class Postil {
     }
     const tmp = `${file}.postil-${process.pid}.tmp`;
     await writeFile(tmp, replaceLines(text, anchor.start_line, anchor.end_line, suggestion), { mode: stat.mode });
+    // Last check before replacing the file: if anything wrote to it meanwhile, keep their version.
+    if (!(await readFile(file)).equals(original)) {
+      await rm(tmp, { force: true });
+      throw new HttpError(409, `${anchor.path} changed while the suggestion was being applied; try again`, 'file_changed');
+    }
     await rename(tmp, file);
 
     this.store.markApplied(commentId);

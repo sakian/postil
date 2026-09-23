@@ -1,5 +1,4 @@
 #!/usr/bin/env node
-import { spawn } from 'node:child_process';
 import { resolve } from 'node:path';
 import { parseArgs } from 'node:util';
 import { ApiError, NotRunningError, PostilClient } from '../core/client.ts';
@@ -22,6 +21,7 @@ Commands:
   url [--agent]            Print the browser URL, or Claude's event feed URL
   base [<rev> | --reset]   Show the base that "all changes" is measured from, or change it
   archive                  Archive resolved conversations and finished reviews, and release their snapshots
+  doctor                   Check Node, git, the UI build, the Claude Code plugin, and the server
   link [--dir <d>] [--force]
                            Put \`postil\` on your PATH (default ~/.local/bin) for the Claude Code plugin
   mcp                      Run the MCP server the Claude Code plugin uses (stdio)
@@ -122,6 +122,8 @@ async function main(argv: string[]): Promise<number> {
     }
     case 'base':
       return base(cwd, rest[0], values.reset ?? false);
+    case 'doctor':
+      return (await import('./doctor.ts')).doctor(cwd);
     case 'archive': {
       const client = await PostilClient.connect(cwd);
       const r = await client.request<{ threads: number; reviews: number; unpinned: number }>('POST', '/api/archive');
@@ -164,18 +166,8 @@ async function serve(cwd: string, port: number | undefined): Promise<number> {
 
 async function openUi(cwd: string): Promise<number> {
   const client = await PostilClient.connect(cwd);
-  const url = client.uiUrl;
-  const [cmd, args] =
-    process.platform === 'darwin' ? ['open', [url]] : process.platform === 'win32' ? ['cmd', ['/c', 'start', '', url]] : ['xdg-open', [url]];
-  const opened = await new Promise<boolean>((done) => {
-    const child = spawn(cmd, args, { stdio: 'ignore', detached: true });
-    child.once('error', () => done(false));
-    child.once('spawn', () => {
-      child.unref();
-      done(true);
-    });
-  });
-  if (!opened) console.log(`Could not launch a browser. Open this URL:\n${url}`);
+  const { openBrowser } = await import('./daemon.ts');
+  if (!(await openBrowser(client.uiUrl))) console.log(`Could not launch a browser. Open this URL:\n${client.uiUrl}`);
   return 0;
 }
 

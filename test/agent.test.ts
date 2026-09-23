@@ -65,7 +65,9 @@ describe('MCP server and hooks against a live review server', () => {
 
   it('offers the review tools', async () => {
     const { tools } = await mcp.listTools();
-    assert.deepEqual(tools.map((t) => t.name).sort(), ['apply_suggestion', 'complete_review', 'connect', 'get_review', 'get_thread', 'list_pending', 'reply']);
+    assert.deepEqual(tools.map((t) => t.name).sort(), [
+      'apply_suggestion', 'complete_review', 'connect', 'get_review', 'get_thread', 'list_pending', 'open_ui', 'reply',
+    ]);
   });
 
   it('keeps hooks silent in a session that is not listening', async () => {
@@ -173,19 +175,27 @@ describe('without a review server', () => {
     }
   });
 
-  it('MCP tools explain how to start the server', async () => {
+  it('connect starts the server, but will not restart one that has stopped', async () => {
     const fx = makeFixture();
+    fx.write('a', '1\n');
+    fx.commit('base');
     const mcp = new Client({ name: 'test', version: '0' });
     try {
       await mcp.connect(new StdioClientTransport({
         command: process.execPath, args: [MAIN, 'mcp'], cwd: fx.dir,
-        env: { ...process.env as Record<string, string>, CLAUDE_PROJECT_DIR: fx.dir }, stderr: 'pipe',
+        env: { ...process.env as Record<string, string>, CLAUDE_PROJECT_DIR: fx.dir, CLAUDE_CODE_SESSION_ID: SESSION }, stderr: 'pipe',
       }));
-      const r = (await mcp.callTool({ name: 'connect', arguments: {} })) as ToolText;
-      assert.equal(r.isError, true);
-      assert.match(textOf(r), /postil start/);
+      const reconnect = (await mcp.callTool({ name: 'connect', arguments: { start: false } })) as ToolText;
+      assert.equal(reconnect.isError, true);
+      assert.match(textOf(reconnect), /arm the Monitor tool with command: .*main\.ts.* wait/);
+      assert.match((await cli(['status'], { cwd: fx.dir })).stderr, /no postil server/, 'start=false started nothing');
+
+      const started = textOf(await mcp.callTool({ name: 'connect', arguments: {} }));
+      assert.match(started, /ws:\/\/127\.0\.0\.1:\d+\/events\?channel=agent&session=/);
+      assert.match((await cli(['status'], { cwd: fx.dir })).stdout, /serving/);
     } finally {
       await mcp.close();
+      await cli(['stop'], { cwd: fx.dir });
       fx.cleanup();
     }
   });
@@ -262,5 +272,47 @@ describe('review formatting', () => {
       }],
     });
     assert.match(out, /`````\nx ```` y\n`````/);
+  });
+});
+
+describe('several repositories at once', () => {
+  it('runs one server per repository, and routes the CLI, MCP tools and hooks by directory', async () => {
+    const a = makeFixture();
+    const b = makeFixture();
+    for (const fx of [a, b]) {
+      fx.write('f.txt', numbered(5));
+      fx.commit('base');
+      fx.write('f.txt', numbered(5, { 2: 'two' }));
+    }
+    const sa = await startServer({ cwd: a.dir, port: 0 });
+    const sb = await startServer({ cwd: b.dir, port: 0 });
+    const mcpA = new Client({ name: 'test', version: '0' });
+    try {
+      assert.notEqual(sa.info.port, sb.info.port);
+      assert.match((await cli(['status'], { cwd: join(b.dir) })).stdout, new RegExp(`serving ${b.dir}`));
+
+      await mcpA.connect(new StdioClientTransport({
+        command: process.execPath, args: [MAIN, 'mcp'], cwd: a.dir,
+        env: { ...process.env as Record<string, string>, CLAUDE_PROJECT_DIR: a.dir, CLAUDE_CODE_SESSION_ID: SESSION },
+        stderr: 'pipe',
+      }));
+      const out = textOf(await mcpA.callTool({ name: 'connect', arguments: {} }));
+      assert.match(out, new RegExp(`127\\.0\\.0\\.1:${sa.info.port}/`), "a session in repository A talks to A's server");
+      assert.equal(sa.postil.store.isListener(SESSION), true);
+      assert.equal(sb.postil.store.isListener(SESSION), false);
+
+      // A review waiting in B does not block the session listening in A.
+      const scope = await sb.postil.resolveScope({ kind: 'all' });
+      await sb.postil.createThread({ from_tree: scope.from.tree, to_tree: scope.to.tree, path: 'f.txt', side: 'new', start_line: 2, body: 'b' });
+      await sb.postil.submitReview();
+      const hookB = await cli(['hook', 'stop'], { cwd: b.dir, input: JSON.stringify({ cwd: b.dir, session_id: SESSION }) });
+      assert.equal(hookB.stdout, '');
+    } finally {
+      await mcpA.close();
+      await sa.close();
+      await sb.close();
+      a.cleanup();
+      b.cleanup();
+    }
   });
 });

@@ -3,8 +3,6 @@
  * They cost money and depend on the model, so they are run by hand, not by `npm test`.
  */
 import { execFileSync, spawn } from 'node:child_process';
-import { mkdtempSync, rmSync, symlinkSync } from 'node:fs';
-import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { ResolvedDiff, ReviewView, ThreadView } from '../../src/core/api-types.ts';
@@ -13,12 +11,14 @@ import { PostilClient } from '../../src/core/client.ts';
 export const ROOT = fileURLToPath(new URL('../../', import.meta.url));
 export const PLUGIN = join(ROOT, 'plugin');
 
-/** A PATH with `postil` on it, without touching the user's own bin directories. Removed at exit. */
+export const BUNDLE = join(PLUGIN, 'dist/postil.mjs');
+
+/**
+ * The PATH the Claude session gets: the user's own, with no `postil` on it. The plugin must work
+ * from its bundle alone.
+ */
 export function pathWithPostil(): string {
-  const bin = mkdtempSync(join(tmpdir(), 'postil-live-bin-'));
-  symlinkSync(join(ROOT, 'src/cli/main.ts'), join(bin, 'postil'));
-  process.on('exit', () => rmSync(bin, { recursive: true, force: true }));
-  return `${bin}:${process.env.PATH}`;
+  return process.env.PATH ?? '';
 }
 
 /** Environment for a child Claude session: ours minus anything that ties it to this session. */
@@ -30,8 +30,9 @@ export function childEnv(path: string): Record<string, string> {
   return { ...env, PATH: path };
 }
 
-export function postil(cwd: string, path: string, ...args: string[]): string {
-  return execFileSync('postil', args, { cwd, env: { ...process.env, PATH: path }, encoding: 'utf8' });
+/** Run the plugin's own bundle, as the harness's stand-in for the user's terminal. */
+export function postil(cwd: string, _path: string, ...args: string[]): string {
+  return execFileSync(process.execPath, [BUNDLE, ...args], { cwd, encoding: 'utf8' });
 }
 
 export async function api<T>(cwd: string, method: 'GET' | 'POST', route: string, body?: unknown): Promise<T> {
@@ -74,7 +75,7 @@ export function reviewAddressed(cwd: string, id: number, timeoutMs: number): Pro
 export const ALLOWED_TOOLS = [
   'mcp__plugin_postil_postil__connect', 'mcp__plugin_postil_postil__list_pending', 'mcp__plugin_postil_postil__get_review',
   'mcp__plugin_postil_postil__get_thread', 'mcp__plugin_postil_postil__reply', 'mcp__plugin_postil_postil__complete_review',
-  'mcp__plugin_postil_postil__apply_suggestion',
+  'mcp__plugin_postil_postil__apply_suggestion', 'mcp__plugin_postil_postil__open_ui',
   'Read', 'Edit', 'Write', 'Grep', 'Glob', 'Monitor', 'Skill', 'Bash(postil:*)', 'Bash(postil wait)', 'Bash(git diff:*)', 'Bash(git status:*)',
 ];
 

@@ -1,10 +1,10 @@
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { fileURLToPath } from 'node:url';
 import { getRequestListener } from '@hono/node-server';
 import {
   acquireLock, lastPort, loadOrCreateToken, rememberPort, removeServerInfo, writeServerInfo, type ServerInfo,
 } from '../core/discovery.ts';
+import { DEFAULT_WEB_ROOT } from '../core/build-info.ts';
 import { EventBus } from '../core/events.ts';
 import { Postil } from '../core/postil.ts';
 import { nowIso } from '../core/util.ts';
@@ -23,7 +23,7 @@ export interface ServeOptions {
   webRoot?: string;
 }
 
-export const DEFAULT_WEB_ROOT = fileURLToPath(new URL('../../web/dist', import.meta.url));
+export { DEFAULT_WEB_ROOT } from '../core/build-info.ts';
 
 export interface RunningServer {
   info: ServerInfo;

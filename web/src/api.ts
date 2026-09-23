@@ -47,16 +47,25 @@ export function getToken(): string | null {
   return token;
 }
 
-async function call<T>(method: string, path: string, body?: unknown): Promise<T> {
+async function call<T>(method: string, path: string, body?: unknown, signal?: AbortSignal): Promise<T> {
   const res = await fetch(path, {
     method,
+    ...(signal && { signal }),
     headers: {
       ...(token && { authorization: `Bearer ${token}` }),
       ...(body !== undefined && { 'content-type': 'application/json' }),
     },
     ...(body !== undefined && { body: JSON.stringify(body) }),
   });
-  const payload = (await res.json().catch(() => ({}))) as { error?: { code: string; message: string; details?: unknown } };
+  // An error response may have no JSON body; a successful one that cannot be read (cut off, or
+  // cancelled mid-download) is a failure, never an empty result.
+  let payload: { error?: { code: string; message: string; details?: unknown } };
+  try {
+    payload = (await res.json()) as typeof payload;
+  } catch (e) {
+    if (res.ok) throw e;
+    payload = {};
+  }
   if (!res.ok) throw new ApiError(res.status, payload.error?.code ?? 'error', payload.error?.message ?? res.statusText, payload.error?.details);
   return payload as T;
 }
@@ -69,8 +78,10 @@ export const api = {
   base: () => call<BaseInfo>('GET', '/api/base'),
   commits: () => call<CommitsInfo>('GET', '/api/commits'),
   resolve: (scope: Scope) => call<ResolvedDiff>('POST', '/api/diff/resolve', { scope }),
-  fileDiff: (oldBlob: string | null, newBlob: string | null, opts: { force?: boolean } = {}) =>
-    call<FileDiff>('GET', `/api/diff/file?${q({ old: oldBlob, new: newBlob, force: opts.force ? '1' : undefined })}`),
+  fileDiff: (oldBlob: string | null, newBlob: string | null, opts: { force?: boolean; signal?: AbortSignal } = {}) =>
+    call<FileDiff>('GET', `/api/diff/file?${q({ old: oldBlob, new: newBlob, force: opts.force ? '1' : undefined })}`, undefined, opts.signal),
+  /** A URL for an <img>: images cannot send headers, so the token rides in the query. */
+  rawUrl: (oid: string, path: string) => `/api/blobs/${oid}/raw?${q({ path, token })}`,
   lines: (oid: string, start: number, end: number) =>
     call<{ lines: string[]; total: number; end: number }>('GET', `/api/blobs/${oid}/lines?${q({ start, end })}`),
 

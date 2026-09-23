@@ -87,3 +87,29 @@ describe('serving before the UI is built', () => {
     }
   });
 });
+
+describe('raw blob previews', () => {
+  it('serves an image with its type, a sandboxing policy, and the token in the query', async () => {
+    const fx = makeFixture();
+    const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==', 'base64');
+    fx.write('logo.png', png);
+    fx.commit('base');
+    const server = await startServer({ cwd: fx.dir, port: 0, webRoot: join(fx.dir, 'none') });
+    try {
+      const oid = fx.git('rev-parse', 'HEAD:logo.png').trim();
+      const unauth = await fetch(`${server.info.url}/api/blobs/${oid}/raw?path=logo.png`);
+      assert.equal(unauth.status, 401);
+      const res = await fetch(`${server.info.url}/api/blobs/${oid}/raw?path=logo.png&token=${server.info.token}`);
+      assert.equal(res.status, 200);
+      assert.equal(res.headers.get('content-type'), 'image/png');
+      assert.match(res.headers.get('content-security-policy') ?? '', /^sandbox/);
+      assert.equal(res.headers.get('x-content-type-options'), 'nosniff');
+      assert.deepEqual(Buffer.from(await res.arrayBuffer()), png);
+      const svg = await fetch(`${server.info.url}/api/blobs/${oid}/raw?path=x.svg&token=${server.info.token}`);
+      assert.match(svg.headers.get('content-security-policy') ?? '', /sandbox/, 'SVGs are sandboxed too');
+    } finally {
+      await server.close();
+      fx.cleanup();
+    }
+  });
+});

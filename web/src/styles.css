@@ -449,3 +449,11 @@ kbd { font: 12px var(--mono); padding: 1px 6px; border: 1px solid var(--border);
 .file-body { content-visibility: auto; contain-intrinsic-size: auto 600px; }
 
 .panel-note { display: flex; gap: 8px; align-items: center; padding: 8px 12px; border-bottom: 1px solid var(--border-muted); font-size: 12px; }
+
+/* ------------------------------------------------------------------ image previews */
+.image-diff { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; padding: 16px; background:
+  repeating-conic-gradient(var(--bg-inset) 0% 25%, var(--bg) 0% 50%) 50% / 16px 16px; }
+.image-side { margin: 0; text-align: center; }
+.image-side figcaption { font-size: 12px; font-weight: 600; margin-bottom: 6px; }
+.image-side img { max-width: 100%; max-height: 400px; border: 1px solid var(--border); background: transparent; }
+.image-none { padding: 40px; border: 1px dashed var(--border); border-radius: var(--radius); background: var(--bg); }

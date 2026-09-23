@@ -52,6 +52,8 @@ export interface FileDiff {
   new_blob: string | null;
   binary: boolean;
   too_large: boolean;
+  /** Why the diff was withheld: the files are big, or the diff has extremely long lines (minified code). */
+  too_large_reason?: 'size' | 'long_lines';
   old_lines: number | null;
   new_lines: number | null;
   hunks: Hunk[];

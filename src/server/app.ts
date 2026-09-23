@@ -99,6 +99,14 @@ function param(c: Context, name: string): number {
   return id.parse(c.req.param(name));
 }
 
+const MAX_RAW_BYTES = 20 * 1024 * 1024;
+
+/** Types served for previews. Anything else is served as an opaque download type. */
+const RAW_TYPES: Record<string, string> = {
+  png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif', webp: 'image/webp',
+  avif: 'image/avif', bmp: 'image/bmp', ico: 'image/x-icon', svg: 'image/svg+xml',
+};
+
 // ---------------------------------------------------------------------------- app
 
 export function createApp(postil: Postil, opts: AppOptions): Hono {
@@ -176,6 +184,17 @@ export function createApp(postil: Postil, opts: AppOptions): Hono {
         force: q.force === '1',
       }),
     );
+  });
+  app.get('/api/blobs/:oid/raw', async (c) => {
+    const blob = oid.parse(c.req.param('oid'));
+    if ((await postil.repo.blobSize(blob)) > MAX_RAW_BYTES) throw new HttpError(413, 'blob too large to preview', 'too_large');
+    const ext = (c.req.query('path') ?? '').split('.').pop()?.toLowerCase() ?? '';
+    const body = await postil.repo.readBlob(blob);
+    c.header('content-type', RAW_TYPES[ext] ?? 'application/octet-stream');
+    // Opened directly, an SVG could run script on this origin; the sandbox stops that.
+    c.header('content-security-policy', "sandbox; default-src 'none'; style-src 'unsafe-inline'; img-src data:");
+    c.header('cache-control', 'private, max-age=31536000, immutable'); // blob ids are content addresses
+    return c.body(new Uint8Array(body));
   });
   app.get('/api/blobs/:oid/lines', async (c) => {
     const q = query(c, schemas.lines);

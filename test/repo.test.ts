@@ -1,5 +1,5 @@
 import { strict as assert } from 'node:assert';
-import { readFileSync } from 'node:fs';
+import { readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { after, before, describe, it } from 'node:test';
 import { Repo } from '../src/git/repo.ts';
@@ -237,6 +237,39 @@ describe('Repo history', () => {
       assert.deepEqual(log[0]?.parents, [c1]);
     } finally {
       fx.cleanup();
+    }
+  });
+});
+
+describe('Repo pins across worktrees', () => {
+  it('keeps each worktree\'s pins separate, so pruning one cannot release another\'s', async () => {
+    const fx = makeFixture();
+    const linkedDir = `${fx.dir}-linked`;
+    try {
+      fx.write('a.txt', '1\n');
+      fx.commit('base');
+      fx.git('worktree', 'add', '-q', linkedDir);
+      const main = await Repo.open(fx.dir);
+      const linked = await Repo.open(linkedDir);
+      assert.equal(main.worktreeId, 'main');
+      assert.match(linked.worktreeId, /^wt-/);
+      assert.notEqual(main.stateDir, linked.stateDir);
+
+      fx.write('a.txt', 'main edit\n');
+      const mainTree = await main.worktreeTree();
+      await main.pin(mainTree);
+      writeFileSync(join(linkedDir, 'a.txt'), 'linked edit\n');
+      const linkedTree = await linked.worktreeTree();
+      await linked.pin(linkedTree);
+
+      assert.deepEqual(await main.pinnedTrees(), [mainTree]);
+      assert.deepEqual(await linked.pinnedTrees(), [linkedTree]);
+      await main.unpin(mainTree); // what a prune in the main worktree does
+      fx.git('gc', '--prune=now', '-q');
+      assert.equal(await linked.objectType(linkedTree), 'tree', "the linked worktree's pin survives");
+    } finally {
+      fx.cleanup();
+      rmSync(linkedDir, { recursive: true, force: true });
     }
   });
 });

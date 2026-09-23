@@ -37,6 +37,8 @@ interface State {
 
   scope: Scope;
   resolved: ResolvedDiff | null;
+  /** Paths changed since the last review, as a set: every file view looks itself up in it. */
+  updatedPaths: ReadonlySet<string>;
   resolving: boolean;
   resolveError: string | null;
   /** The working tree moved since the diff was resolved. */
@@ -64,8 +66,12 @@ interface State {
   fileFold: Record<string, boolean>;
   selection: Target | null;
   composer: Target | null;
+  /** Unsent comment text by composer, kept here so it survives its file scrolling out of the DOM. */
+  composerText: Record<string, string>;
   panel: Panel;
   focusThread: number | null;
+  /** A request to scroll a file into view; `n` makes repeated requests for one file distinct. */
+  revealPath: { path: string; n: number } | null;
   toasts: Toast[];
 }
 
@@ -83,6 +89,8 @@ interface Actions {
   setDoneUnfolded(key: string, unfolded: boolean): void;
   applySuggestion(commentId: number): Promise<void>;
   loadDiff(file: FileChange, force?: boolean): Promise<void>;
+  /** Drop a pending diff request for a file that left the page, so it stops holding a connection. */
+  cancelDiff(file: FileChange): void;
   loadLines(oid: string, total: number): Promise<string[] | null>;
   loadTokens(oid: string, path: string, total: number): Promise<void>;
 
@@ -97,6 +105,7 @@ interface Actions {
   setViewed(file: FileChange, viewed: boolean): Promise<void>;
 
   select(target: Target | null): void;
+  setComposerText(key: string, text: string | null): void;
   openComposer(target: Target | null): void;
   createThread(target: Target, body: string): Promise<void>;
   reply(threadId: number, body: string): Promise<void>;
@@ -108,6 +117,7 @@ interface Actions {
 
   setPanel(panel: Panel): void;
   focus(threadId: number | null): void;
+  revealFile(path: string): void;
   toast(text: string, action?: Toast['action']): void;
   dismiss(id: number): void;
   handleEvent(e: { type: string; [k: string]: unknown }): void;
@@ -133,6 +143,31 @@ function errorText(e: unknown): string {
 
 let toastId = 0;
 
+const inflight = new Map<string, Promise<unknown>>();
+/**
+ * Diff requests still in flight. The browser runs only a few requests per server at once, so after
+ * a fast scroll, requests for files already gone would otherwise delay the files on screen.
+ */
+const diffRequests = new Map<string, AbortController>();
+
+/** Run `fn` once per key at a time; concurrent callers share its promise. */
+function once<T>(key: string, fn: () => Promise<T>): Promise<T> {
+  const running = inflight.get(key) as Promise<T> | undefined;
+  if (running) return running;
+  const p = fn().finally(() => inflight.delete(key));
+  inflight.set(key, p);
+  return p;
+}
+
+async function fetchLines(oid: string, total: number): Promise<string[]> {
+  const all: string[] = [];
+  for (let start = 1; start <= total; start += 10_000) {
+    const chunk = await api.lines(oid, start, Math.min(total, start + 9_999));
+    all.push(...chunk.lines);
+  }
+  return all;
+}
+
 export const useStore = create<Store>()((set, get) => {
   const fail = (e: unknown) => {
     if (e instanceof ApiError && e.status === 401) set({ authFailed: true });
@@ -148,6 +183,7 @@ export const useStore = create<Store>()((set, get) => {
     base: null,
     scope: { kind: 'all' },
     resolved: null,
+    updatedPaths: new Set(),
     resolving: false,
     resolveError: null,
     stale: false,
@@ -167,8 +203,10 @@ export const useStore = create<Store>()((set, get) => {
     fileFold: {},
     selection: null,
     composer: null,
+    composerText: {},
     panel: null,
     focusThread: null,
+    revealPath: null,
     toasts: [],
 
     async boot() {
@@ -206,7 +244,7 @@ export const useStore = create<Store>()((set, get) => {
       set({ resolving: true, resolveError: null });
       try {
         const [resolved, base] = await Promise.all([api.resolve(get().scope), api.base()]);
-        set({ resolved, base, stale: false });
+        set({ resolved, base, stale: false, updatedPaths: new Set(resolved.since_review?.changed ?? []) });
         // Thread and "done" positions depend on the diff, so re-anchor them to the new one.
         await Promise.all([get().refreshThreads(), get().refreshSections()]);
       } catch (e) {
@@ -318,31 +356,38 @@ export const useStore = create<Store>()((set, get) => {
       }
     },
 
+    // Each loader writes the store once, when its data arrives. In-flight requests are tracked
+    // outside the store: every store update runs every file view's selectors, so on a review with
+    // thousands of files, "loading" updates alone would cost more than the data.
     async loadDiff(file, force = false) {
       const key = diffKey(file);
       const current = get().diffs[key];
       if (!force && current && current.state !== 'error') return;
-      set((s) => ({ diffs: { ...s.diffs, [key]: { state: 'loading' } } }));
-      try {
-        const value = await api.fileDiff(file.old_blob, file.new_blob, { force });
-        set((s) => ({ diffs: { ...s.diffs, [key]: { state: 'ready', value } } }));
-      } catch (e) {
-        set((s) => ({ diffs: { ...s.diffs, [key]: { state: 'error', message: errorText(e) } } }));
-      }
+      await once(`diff:${key}:${force}`, async () => {
+        const controller = new AbortController();
+        diffRequests.set(key, controller);
+        try {
+          const value = await api.fileDiff(file.old_blob, file.new_blob, { force, signal: controller.signal });
+          set((s) => ({ diffs: { ...s.diffs, [key]: { state: 'ready', value } } }));
+        } catch (e) {
+          if (controller.signal.aborted) return; // the file left the page; it asks again if it returns
+          set((s) => ({ diffs: { ...s.diffs, [key]: { state: 'error', message: errorText(e) } } }));
+        } finally {
+          diffRequests.delete(key);
+        }
+      });
+    },
+
+    cancelDiff(file) {
+      diffRequests.get(diffKey(file))?.abort();
     },
 
     async loadLines(oid, total) {
       const current = get().lines[oid];
       if (current?.state === 'ready') return current.value;
-      if (current?.state === 'loading') return null;
-      set((s) => ({ lines: { ...s.lines, [oid]: { state: 'loading' } } }));
       try {
-        const all: string[] = [];
-        for (let start = 1; start <= total; start += 10_000) {
-          const chunk = await api.lines(oid, start, Math.min(total, start + 9_999));
-          all.push(...chunk.lines);
-        }
-        set((s) => ({ lines: { ...s.lines, [oid]: { state: 'ready', value: all } } }));
+        const all = await once(`lines:${oid}`, () => fetchLines(oid, total));
+        if (get().lines[oid]?.state !== 'ready') set((s) => ({ lines: { ...s.lines, [oid]: { state: 'ready', value: all } } }));
         return all;
       } catch (e) {
         set((s) => ({ lines: { ...s.lines, [oid]: { state: 'error', message: errorText(e) } } }));
@@ -352,14 +397,20 @@ export const useStore = create<Store>()((set, get) => {
 
     async loadTokens(oid, path, total) {
       if (get().tokens[oid]) return;
-      if (total > MAX_HIGHLIGHT_LINES) {
-        set((s) => ({ tokens: { ...s.tokens, [oid]: { state: 'ready', value: null } } }));
-        return;
-      }
-      set((s) => ({ tokens: { ...s.tokens, [oid]: { state: 'loading' } } }));
-      const lines = await get().loadLines(oid, total);
-      const value = lines ? await highlight(lines.join('\n'), path) : null;
-      set((s) => ({ tokens: { ...s.tokens, [oid]: { state: 'ready', value } } }));
+      await once(`tokens:${oid}`, async () => {
+        if (total > MAX_HIGHLIGHT_LINES) {
+          set((s) => ({ tokens: { ...s.tokens, [oid]: { state: 'ready', value: null } } }));
+          return;
+        }
+        const cached = get().lines[oid];
+        const lines = cached?.state === 'ready' ? cached.value : await once(`lines:${oid}`, () => fetchLines(oid, total)).catch(() => null);
+        const value = lines ? await highlight(lines.join('\n'), path) : null;
+        // Lines and tokens land together: one update instead of two.
+        set((s) => ({
+          tokens: { ...s.tokens, [oid]: { state: 'ready', value } },
+          ...(lines && s.lines[oid]?.state !== 'ready' && { lines: { ...s.lines, [oid]: { state: 'ready' as const, value: lines } } }),
+        }));
+      });
     },
 
     setView(view) {
@@ -434,6 +485,13 @@ export const useStore = create<Store>()((set, get) => {
 
     select(target) {
       set({ selection: target });
+    },
+
+    setComposerText(key, text) {
+      set((s) => {
+        const { [key]: _drop, ...rest } = s.composerText;
+        return { composerText: text === null || text === '' ? rest : { ...rest, [key]: text } };
+      });
     },
 
     openComposer(target) {
@@ -521,6 +579,10 @@ export const useStore = create<Store>()((set, get) => {
 
     focus(threadId) {
       set({ focusThread: threadId });
+    },
+
+    revealFile(path) {
+      set((s) => ({ revealPath: { path, n: (s.revealPath?.n ?? 0) + 1 } }));
     },
 
     toast(text, action) {

@@ -88,7 +88,8 @@ postil/
   src/db/                 SQLite schema, migrations, Store
   src/core/               Postil service (all review rules), events, discovery, client
   src/server/             Hono HTTP API, WebSocket event feed, server lifecycle
-  src/cli/                `postil` binary, MCP server, and hook handlers
+  src/cli/                `postil` binary, MCP server, hook handlers, doctor
+  scripts/                build-plugin (esbuild bundle into plugin/dist) and install-plugin
   test/                   node:test suites against throwaway repositories
   web/                    Vite + React UI; pure logic in web/src/lib is unit-tested under Node
   e2e/                    Playwright tests that drive the built UI against a real server
@@ -286,12 +287,50 @@ could stay on "Loading diff" forever, because lazy loading waited on an intersec
 whose root was the viewport, not the scrolling pane. Fixed by observing the pane and checking a
 newly mounted file's position directly.
 
-### Phase 6: hardening
+### Phase 6: hardening — DONE 2026-09-23
 
-- Concurrency: you commenting while Claude edits the same file; blob-SHA checks on every write.
-- Large diffs (binary files, renames, thousands of lines) and performance.
-- Multiple repos at once (one server each; `postil open` picks by cwd).
-- Install story: `npm i -g postil`, `claude plugin install ./plugin` or a marketplace entry.
+**Concurrency with Claude.**
+- Snapshots at submit and completion wait until two reads a moment apart agree, so a file Claude
+  is halfway through writing is not captured.
+- A comment is anchored to the view the user saw, even if Claude changed the file before it was
+  saved; re-anchoring then places it in the current diff.
+- Applying a suggestion re-reads the file just before the final rename and refuses if anything
+  wrote to it meanwhile. It also refuses files that are not UTF-8, which rewriting through a
+  string would corrupt.
+
+**Awkward diffs.**
+- Binary images show before and after previews, served from a raw-blob endpoint under a sandboxing
+  content security policy so an SVG opened directly cannot run script on postil's origin.
+- Pure renames and mode changes skip reading content; diffs with lines over 20,000 characters
+  (minified code) wait behind "Load it anyway"; paths with spaces and non-ASCII characters work
+  end to end.
+
+**Scale.** Reviews over 150 files render only the files near the viewport between spacers, with
+heights measured as they mount, and scrolling to an unmounted file (sidebar, keyboard, "Show in
+diff") jumps to its computed offset and holds it in place while heights settle. Unsent comment text
+moved into the store so nothing is lost when a file leaves the DOM. Loaders write the store once per
+result instead of also writing "loading" states, diff requests for files that leave the page are
+cancelled, and the highlighter serves the newest request first. Measured on 2,001 files: first diff
+in about 1s, worst load-time block 143ms, 881ms of blocking in total across a full scroll (it was
+123s before these changes), about 9,600 DOM elements at the end (2.2 million before).
+
+**Several repositories and worktrees.** One server per repository was already the design; a test
+now runs two at once and checks that the CLI, MCP tools and hooks each reach the right one. A real
+bug was fixed: linked worktrees share refs, so pins now live in a per-worktree namespace
+(`refs/postil/<worktree>/...`), and pruning one worktree cannot release another's snapshots.
+
+**Install.** The plugin is self-contained: `plugin/dist/postil.mjs` is an esbuild bundle of the
+CLI, server, MCP server and hooks, with the UI beside it, run with plain `node`. Nothing needs to be
+on PATH, which removes the failure behind Claude Code's 15-minute MCP retry cache. `connect` starts
+the server itself; `open_ui` opens the browser; after a monitor close, `connect` with `start: false`
+never restarts a server the user stopped and instead hands Claude a `wait` command that points at
+the bundle. `npm run install-plugin` builds and reinstalls from the checkout, since Claude Code
+ignores a rebuilt plugin whose version is unchanged; it was checked in an isolated Claude config.
+`postil doctor` checks the whole setup. Publishing to npm or a hosted marketplace is left for later:
+a hosted marketplace would need the built bundle committed or released.
+
+Verified by 159 unit and integration tests, 27 browser tests, the 2,000-file benchmark, and both
+live tests with `postil` absent from PATH.
 
 ## 6. Open decisions
 
@@ -309,5 +348,6 @@ newly mounted file's position directly.
   re-arm. Not used for now: they are a research preview, each session must be started with a
   flag, and a custom channel like postil's needs `--dangerously-load-development-channels`.
   Worth revisiting if that opt-in goes away.
-- Claude Code caches a failed MCP connection for about 15 minutes. A user who installs the plugin
-  before running `postil link` must reconnect with `/mcp` or wait.
+- Claude Code caches a failed MCP connection for about 15 minutes. Since Phase 6 the plugin needs
+  nothing on PATH, so the usual cause is gone; an unbuilt plugin (no `plugin/dist`) still hits it,
+  and `/mcp` reconnects.

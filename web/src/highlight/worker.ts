@@ -44,11 +44,19 @@ export function resolveLanguage(nameOrPath: string): string | null {
 
 const scope = self as unknown as DedicatedWorkerGlobalScope;
 
-// Requests are handled one at a time, in order, by the single worker thread.
-let queue: Promise<void> = Promise.resolve();
+// Newest first: after a fast scroll, the files on screen asked last, and files merely scrolled
+// past should not make them wait.
+const pending: HighlightRequest[] = [];
+let busy = false;
 scope.onmessage = (e: MessageEvent<HighlightRequest>) => {
-  queue = queue.then(() => handle(e.data));
+  pending.push(e.data);
+  if (!busy) void drain();
 };
+async function drain(): Promise<void> {
+  busy = true;
+  while (pending.length) await handle(pending.pop()!);
+  busy = false;
+}
 
 async function handle({ id, text, language }: HighlightRequest): Promise<void> {
   const reply = (r: HighlightResponse) => scope.postMessage(r);

@@ -17,27 +17,28 @@ requests about this repository, with the same care and the same permission rules
 
 If the user passed `stop`, see "Stop listening" instead.
 
-1. Run `postil start` with Bash. It starts the review server for this repository, or reports the one running,
-   and prints the UI address. If `postil` is not found, tell the user to run `node <postil checkout>/src/cli/main.ts link`
-   and stop.
-2. Run `postil open` with Bash to open the UI in the user's browser. Skip this if they already have it open.
-3. Call the postil `connect` tool. It registers this session and returns a WebSocket URL.
-4. Arm the Monitor tool with a `ws` source: that URL, description `postil review requests`, and
+1. Call the postil `connect` tool. It starts the review server for this repository if needed, registers this
+   session, and returns a WebSocket URL and the UI address.
+2. Call `open_ui` to open the UI in the user's browser, unless they already have it open.
+3. Arm the Monitor tool with a `ws` source: the URL from `connect`, description `postil review requests`, and
    `timeout_ms` 1800000.
-5. Tell the user in one or two lines that the UI is open and you will pick up each review when they submit it.
+4. Tell the user in one or two lines that the UI is open and you will pick up each review when they submit it.
    Then end your turn and wait. Do not poll.
-6. If `connect` listed reviews already waiting, handle them now.
+5. If `connect` listed reviews already waiting, handle them now.
+
+If the postil tools are missing, the plugin's MCP server failed to start. Tell the user to run `/mcp` and reconnect
+`plugin:postil:postil`, and that the plugin must be built (`npm run build` in the postil checkout) before installing.
 
 ## When the monitor fires
 
 - `hello`: the monitor connected. If it lists `pending_reviews`, handle each one. Otherwise do nothing and say nothing.
 - `review.submitted`: handle that review.
-- The monitor expired, or its WebSocket closed: call `connect` again and re-arm the Monitor with the URL it
-  returns, without comment. The URL can change when the server restarts.
-- If `connect` reports the server is not running, it is probably restarting. Arm a Monitor with the command
-  `postil wait` (description `postil server restart`, `timeout_ms` 1800000) and end your turn without comment.
-  When it reports the server is running again, call `connect` and re-arm the WebSocket monitor. If it reports the
-  server did not come back, tell the user in one line that you stopped listening.
+- The monitor expired, or its WebSocket closed: call `connect` with `start` set to false, and re-arm the Monitor
+  with the URL it returns, without comment. The URL can change when the server restarts.
+- If that `connect` reports the server is not running, it gives you a command to watch for its return. Arm a
+  Monitor with it as it says and end your turn without comment. When it reports the server is running again,
+  call `connect` and re-arm the WebSocket monitor. If it reports the server did not come back, tell the user in one
+  line that you stopped listening. Never restart a server the user stopped.
 
 ## Handling a review
 
@@ -60,5 +61,5 @@ has already claimed a review, leave it alone.
 
 ## Stop listening
 
-Stop the Monitor task if one is running (use TaskStop with its task id), tell the user you are no longer listening,
-and offer to stop the server with `postil stop`.
+Stop the Monitor task if one is running (use TaskStop with its task id), and tell the user you are no longer
+listening. The server keeps running for the UI; they can stop it with `postil stop`.

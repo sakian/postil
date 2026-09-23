@@ -2,7 +2,7 @@ import { useMemo } from 'react';
 import { markKey, viewedBlob } from '../format.ts';
 import { buildTree, dirPaths, flatten } from '../lib/tree.ts';
 import { useStore } from '../store.ts';
-import { fileAnchor, StatusBadge } from './DiffPane.tsx';
+import { StatusBadge } from './DiffPane.tsx';
 import { Icon } from './icons.tsx';
 
 export function Sidebar() {
@@ -10,7 +10,7 @@ export function Sidebar() {
   const collapsedDirs = useStore((s) => s.collapsedDirs);
   const viewed = useStore((s) => s.viewed);
   const threads = useStore((s) => s.threads);
-  const { toggleDir, setCollapsedDirs } = useStore.getState();
+  const { toggleDir, setCollapsedDirs, revealFile } = useStore.getState();
 
   const tree = useMemo(() => buildTree(resolved?.files ?? []), [resolved]);
   const allDirs = useMemo(() => dirPaths(tree), [tree]);
@@ -64,7 +64,7 @@ export function Sidebar() {
           const open = openByPath.get(f.path) ?? 0;
           return (
             <button key={`f:${node.path}`} className={`tree-row tree-file${isViewed ? ' is-viewed' : ''}`} style={pad}
-              onClick={() => document.getElementById(fileAnchor(f.path))?.scrollIntoView({ block: 'start' })} title={f.path}>
+              onClick={() => revealFile(f.path)} title={f.path}>
               <StatusBadge file={f} />
               <span className="tree-name">{node.name}</span>
               {updatedPaths.has(f.path) && <span className="tree-updated" title={`Changed since you submitted review #${updated?.review_id}`} />}

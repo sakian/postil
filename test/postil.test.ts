@@ -714,3 +714,98 @@ describe('archiving and pruning', () => {
     }
   });
 });
+
+describe('hardening', () => {
+  let fx: Fixture;
+  let postil: Postil;
+  beforeEach(async () => {
+    fx = makeFixture();
+    fx.write('f.txt', numbered(10));
+    fx.write('src/naïve café/π.ts', numbered(5));
+    fx.write('latin1.txt', Buffer.from('caf\xe9\nline two\n', 'latin1'));
+    fx.commit('base');
+    postil = await Postil.open(fx.dir);
+  });
+  const cleanup = () => { postil.close(); fx.cleanup(); };
+
+  it('waits for a file being written to settle before snapshotting', async () => {
+    try {
+      fx.write('f.txt', 'half written');
+      const pending = postil.snapshot('test');
+      setTimeout(() => fx.write('f.txt', numbered(10, { 3: 'finished' })), 60);
+      const tree = await pending;
+      const entry = await postil.repo.entryAt(tree, 'f.txt');
+      assert.match((await postil.repo.readBlob(entry!.oid)).toString(), /finished/);
+    } finally {
+      cleanup();
+    }
+  });
+
+  it('anchors a comment to the view the user saw, even if Claude has since changed the file', async () => {
+    try {
+      fx.write('f.txt', numbered(10, { 4: 'four' }));
+      const seen = await postil.resolveScope({ kind: 'all' });
+      fx.write('f.txt', `// Claude was quicker\n${numbered(10, { 4: 'four' })}`); // lands before the comment is saved
+      const t = await postil.createThread({ from_tree: seen.from.tree, to_tree: seen.to.tree, path: 'f.txt', side: 'new', start_line: 4, body: 'hm' });
+      assert.equal(t.anchor_text, 'four');
+      const now = await postil.resolveScope({ kind: 'all' });
+      const [anchored] = await postil.threadsIn({ from_tree: now.from.tree, to_tree: now.to.tree });
+      assert.deepEqual([anchored?.anchor?.state, anchored?.anchor?.start_line], ['moved', 5]);
+    } finally {
+      cleanup();
+    }
+  });
+
+  it('skips reading blobs when both sides are the same content', async () => {
+    try {
+      const phantom = 'a'.repeat(40); // does not exist: reading it would fail
+      const d = await postil.fileDiff(phantom, phantom);
+      assert.deepEqual([d.too_large, d.hunks.length], [false, 0]);
+    } finally {
+      cleanup();
+    }
+  });
+
+  it('withholds diffs with extremely long lines unless forced', async () => {
+    try {
+      fx.write('f.txt', `${'x'.repeat(30_000)}\n`);
+      const s = await postil.resolveScope({ kind: 'all' });
+      const f = (await postil.files(s.from.tree, s.to.tree)).find((x) => x.path === 'f.txt')!;
+      const d = await postil.fileDiff(f.old_blob, f.new_blob);
+      assert.deepEqual([d.too_large, d.too_large_reason], [true, 'long_lines']);
+      assert.ok((await postil.fileDiff(f.old_blob, f.new_blob, { force: true })).hunks.length > 0);
+    } finally {
+      cleanup();
+    }
+  });
+
+  it('refuses to apply a suggestion to a file that is not UTF-8, leaving it untouched', async () => {
+    try {
+      fx.write('latin1.txt', Buffer.from('caf\xe9\nline 2\n', 'latin1'));
+      const s = await postil.resolveScope({ kind: 'all' });
+      const t = await postil.createThread({
+        from_tree: s.from.tree, to_tree: s.to.tree, path: 'latin1.txt', side: 'new', start_line: 2,
+        body: '```suggestion\nline two\n```',
+      });
+      await rejectsWith(postil.applySuggestion(t.comments[0]!.id), 'not_utf8');
+      assert.deepEqual(readFileSync(join(fx.dir, 'latin1.txt')), Buffer.from('caf\xe9\nline 2\n', 'latin1'));
+    } finally {
+      cleanup();
+    }
+  });
+
+  it('handles paths with spaces and non-ASCII characters end to end', async () => {
+    try {
+      const path = 'src/naïve café/π.ts';
+      fx.write(path, numbered(5, { 2: 'deux' }));
+      const s = await postil.resolveScope({ kind: 'all' });
+      const f = (await postil.files(s.from.tree, s.to.tree)).find((x) => x.path === path);
+      assert.ok(f, 'listed with its real name');
+      const t = await postil.createThread({ from_tree: s.from.tree, to_tree: s.to.tree, path, side: 'new', start_line: 2, body: '```suggestion\ntwo\n```' });
+      await postil.applySuggestion(t.comments[0]!.id);
+      assert.match(readFileSync(join(fx.dir, path), 'utf8'), /^line 1\ntwo\nline 3/);
+    } finally {
+      cleanup();
+    }
+  });
+});

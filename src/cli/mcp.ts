@@ -5,6 +5,7 @@ import type { AgentReview, AppliedSuggestion, ListenResult, ReviewView, ThreadVi
 import { ApiError, NotRunningError, PostilClient } from '../core/client.ts';
 import { VERSION } from '../core/version.ts';
 import { formatPending, formatReview, formatUiThread } from './agent-format.ts';
+import { openBrowser, startDaemon, waitCommand } from './daemon.ts';
 
 type ToolResult = { content: Array<{ type: 'text'; text: string }>; isError?: boolean };
 
@@ -24,7 +25,7 @@ export function createMcpServer(env: { projectDir: string; session: string | und
       return await fn(await PostilClient.connect(env.projectDir, { session: env.session }));
     } catch (e) {
       if (e instanceof NotRunningError) {
-        return failure(`${e.message}. Start it by running \`postil start\` in ${e.root}, then try again.`);
+        return failure(`${e.message}. Call connect to start it.`);
       }
       if (e instanceof ApiError) return failure(`postil: ${e.message}`);
       return failure(`postil: ${e instanceof Error ? e.message : String(e)}`);
@@ -36,12 +37,31 @@ export function createMcpServer(env: { projectDir: string; session: string | und
     {
       title: 'Listen for postil reviews',
       description:
-        'Register this session to receive postil reviews, and get the URL to watch. Arm the Monitor tool on the returned ' +
-        'URL so you are woken when the user submits a review. Call again to re-arm after the monitor expires or closes.',
-      inputSchema: {},
+        "Register this session to receive postil reviews, starting the repository's review server if needed, and get the " +
+        'URL to watch. Arm the Monitor tool on it so you are woken when the user submits a review. After the monitor ' +
+        'closes, call again with start=false, so a server the user stopped on purpose is not restarted.',
+      inputSchema: { start: z.boolean().optional().describe('Start the server if it is not running (default true).') },
     },
-    async () =>
-      withClient(async (client) => {
+    async ({ start }) => {
+      if (start !== false) {
+        try {
+          await startDaemon(env.projectDir);
+        } catch (e) {
+          return failure(`postil: could not start the review server: ${e instanceof Error ? e.message : String(e)}`);
+        }
+      } else {
+        try {
+          await PostilClient.connect(env.projectDir);
+        } catch (e) {
+          if (!(e instanceof NotRunningError)) throw e;
+          return failure(
+            `The postil server is not running (it may be restarting). To be told when it is back, arm the Monitor tool ` +
+              `with command: ${waitCommand(e.root)}  (description "postil server restart", timeout_ms 1800000). ` +
+              'When it reports the server is running, call connect again and re-arm the WebSocket monitor.',
+          );
+        }
+      }
+      return withClient(async (client) => {
         const { pending } = client.session
           ? await client.request<ListenResult>('POST', '/api/agent/listen')
           : { pending: (await client.request<{ reviews: ReviewView[] }>('GET', '/api/agent/pending')).reviews.map((r) => r.id) };
@@ -60,7 +80,17 @@ export function createMcpServer(env: { projectDir: string; session: string | und
             pending.length ? `Reviews already waiting: ${pending.map((id) => `#${id}`).join(', ')}. Handle them now with get_review.` : 'No reviews are waiting yet.',
           ].join('\n'),
         );
-      }),
+      });
+    },
+  );
+
+  server.registerTool(
+    'open_ui',
+    { title: 'Open the review UI', description: "Open the postil review UI in the user's browser.", inputSchema: {} },
+    async () =>
+      withClient(async (client) =>
+        text((await openBrowser(client.uiUrl)) ? `Opened ${client.uiUrl}` : `No browser could be launched here. Give the user this address: ${client.uiUrl}`),
+      ),
   );
 
   server.registerTool(
