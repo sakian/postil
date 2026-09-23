@@ -55,7 +55,12 @@ const schemas = {
     force: z.enum(['0', '1']).optional(),
   }),
   lines: z.object({ start: z.coerce.number().int(), end: z.coerce.number().int() }),
-  threadFilter: z.object({ status: z.enum(['open', 'resolved']).optional(), path: z.string().optional() }),
+  threadFilter: z.object({
+    status: z.enum(['open', 'resolved']).optional(),
+    path: z.string().optional(),
+    from: oid.optional(),
+    to: oid.optional(),
+  }),
   newThread: z.object({
     from_tree: oid, to_tree: oid, path: z.string().min(1), side,
     start_line: line.nullable().optional(), end_line: line.nullable().optional(), body: z.string(),
@@ -154,7 +159,8 @@ export function createApp(postil: Postil, opts: AppOptions): Hono {
   // -------------------------------------------------------------- diffs
   app.post('/api/diff/resolve', async (c) => {
     const resolved = await postil.resolveScope((await json(c, schemas.resolve)).scope);
-    return c.json({ ...resolved, files: await postil.files(resolved.from.tree, resolved.to.tree) });
+    const [files, sinceReview] = await Promise.all([postil.files(resolved.from.tree, resolved.to.tree), postil.sinceReview(resolved.to.tree)]);
+    return c.json({ ...resolved, files, since_review: sinceReview });
   });
   app.get('/api/diff/files', async (c) => {
     const q = query(c, schemas.files);
@@ -177,7 +183,12 @@ export function createApp(postil: Postil, opts: AppOptions): Hono {
   });
 
   // -------------------------------------------------------------- threads & comments
-  app.get('/api/threads', (c) => c.json({ threads: postil.threads(query(c, schemas.threadFilter)) }));
+  app.get('/api/threads', async (c) => {
+    const { from, to, ...filter } = query(c, schemas.threadFilter);
+    if ((from === undefined) !== (to === undefined)) throw new HttpError(400, 'give both from and to, or neither', 'invalid_request');
+    const threads = from && to ? await postil.threadsIn({ from_tree: from, to_tree: to }, filter) : postil.threads(filter);
+    return c.json({ threads });
+  });
   app.get('/api/threads/:id', (c) => c.json(postil.thread(param(c, 'id'))));
   app.post('/api/threads', async (c) => c.json(await postil.createThread(await json(c, schemas.newThread)), 201));
   app.post('/api/threads/:id/replies', async (c) => c.json(postil.replyAsUser(param(c, 'id'), (await json(c, schemas.body)).body), 201));
@@ -185,6 +196,7 @@ export function createApp(postil: Postil, opts: AppOptions): Hono {
   app.post('/api/threads/:id/unresolve', (c) => c.json(postil.unresolveThread(param(c, 'id'))));
   app.patch('/api/comments/:id', async (c) => c.json(postil.editDraft(param(c, 'id'), (await json(c, schemas.body)).body)));
   app.delete('/api/comments/:id', (c) => c.json(postil.deleteDraft(param(c, 'id'))));
+  app.post('/api/comments/:id/apply', async (c) => c.json(await postil.applySuggestion(param(c, 'id'))));
 
   // -------------------------------------------------------------- reviews
   app.get('/api/reviews', (c) => c.json({ reviews: postil.reviews() }));
@@ -236,6 +248,7 @@ export function createApp(postil: Postil, opts: AppOptions): Hono {
     const b = await json(c, schemas.agentReply);
     return c.json(await postil.agentReply(param(c, 'id'), b.body, b.needs_decision ?? false, session(c)), 201);
   });
+  app.post('/api/agent/comments/:id/apply', async (c) => c.json(await postil.applySuggestion(param(c, 'id'))));
   app.post('/api/agent/reviews/:id/complete', async (c) =>
     c.json(await postil.completeReview(param(c, 'id'), (await json(c, schemas.complete)).summary)),
   );

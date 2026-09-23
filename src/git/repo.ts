@@ -55,6 +55,8 @@ export class Repo {
   private readonly indexMutex = new Mutex();
   private readonly blobs = new ByteLru<string>(64 * 1024 * 1024, 8 * 1024 * 1024);
   private emptyTreeOid: string | undefined;
+  /** Tree ids are content addresses, so a lookup in a tree never changes. */
+  private readonly entries = new Map<string, TreeEntry | null>();
   private emptyBlobOid: string | undefined;
 
   /** Top level of the working tree. */
@@ -215,6 +217,15 @@ export class Repo {
   /** The entry at `path` in `tree`, or null if the path does not exist there. */
   async entryAt(tree: string, path: string): Promise<TreeEntry | null> {
     assertOid(tree, 'tree id');
+    const key = `${tree}\0${path}`;
+    if (this.entries.has(key)) return this.entries.get(key)!;
+    const entry = await this.lookupEntry(tree, path);
+    if (this.entries.size > 20_000) this.entries.clear();
+    this.entries.set(key, entry);
+    return entry;
+  }
+
+  private async lookupEntry(tree: string, path: string): Promise<TreeEntry | null> {
     const out = await gitText(this.root, ['ls-tree', '-z', '--full-tree', tree, '--', path], {
       env: { GIT_LITERAL_PATHSPECS: '1' },
     });

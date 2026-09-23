@@ -3,10 +3,12 @@
  * UI can import them directly and stay in lockstep with the server.
  */
 import type { Author, ReviewRow, Side } from '../db/types.ts';
+import type { Anchor } from './anchors.ts';
 import type { Commit, FileChange, Hunk } from '../git/types.ts';
 
 export type { Author, ReviewRow, ReviewStatus, SectionMarkRow, FileMarkRow, Side, ThreadStatus } from '../db/types.ts';
 export type { Commit, DiffLine, FileChange, FileKind, FileStatus, Hunk, LineKind } from '../git/types.ts';
+export type { Anchor, AnchorState } from './anchors.ts';
 
 
 export type BaseConfig =
@@ -63,6 +65,8 @@ export interface CommentView {
   draft: boolean;
   created_at: string;
   updated_at: string;
+  /** When this comment's suggestion was written into the working tree. */
+  applied_at: string | null;
 }
 
 export interface ThreadView {
@@ -84,6 +88,8 @@ export interface ThreadView {
   created_at: string;
   resolved_at: string | null;
   comments: CommentView[];
+  /** Where the thread sits in the diff it was requested for; absent when no diff was given. */
+  anchor?: Anchor;
 }
 
 export interface ReviewView extends ReviewRow {
@@ -112,10 +118,18 @@ export interface AgentThread {
   needs_decision: boolean;
   /** True when this review still needs a reply from Claude on this thread. */
   awaiting_reply: boolean;
-  /** True when the file on disk differs from the version the comment was written on. */
-  file_changed_since_comment: boolean;
-  file_exists: boolean;
-  comments: Array<{ id: number; author: Author; body: string; created_at: string; in_this_review: boolean }>;
+  /** Where the commented lines are in the working tree now. */
+  anchor: Anchor;
+  comments: Array<{
+    id: number;
+    author: Author;
+    body: string;
+    created_at: string;
+    in_this_review: boolean;
+    /** The comment contains a ```suggestion block. */
+    suggestion: boolean;
+    applied: boolean;
+  }>;
 }
 
 export interface AgentReview {
@@ -146,6 +160,17 @@ export interface Health {
 
 export interface ResolvedDiff extends ResolvedScope {
   files: FileChange[];
+  /** Paths whose content on the "to" side changed after the latest submitted review. */
+  since_review: { review_id: number; changed: string[] } | null;
+}
+
+export interface AppliedSuggestion {
+  comment_id: number;
+  thread_id: number;
+  path: string;
+  /** The lines the suggestion now occupies. */
+  start_line: number;
+  end_line: number;
 }
 
 export interface ApiErrorBody {

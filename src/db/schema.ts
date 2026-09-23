@@ -115,4 +115,8 @@ export const MIGRATIONS: readonly string[] = [
     last_seen     TEXT NOT NULL
   );
   `,
+  `
+  -- When a suggestion in this comment was written into the working tree.
+  ALTER TABLE comment ADD COLUMN applied_at TEXT;
+  `,
 ];

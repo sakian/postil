@@ -8,7 +8,8 @@
  * Screenshots of each step land in e2e/screenshots/.
  */
 import { strict as assert } from 'node:assert';
-import { mkdirSync } from 'node:fs';
+import { mkdirSync, readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { after, before, describe, it } from 'node:test';
 import { chromium, type Browser, type Locator, type Page } from 'playwright';
 import { startServer, type RunningServer } from '../src/server/server.ts';
@@ -192,11 +193,14 @@ describe('postil UI', { timeout: 120_000 }, () => {
     await page.locator('.banner', { hasText: 'Files changed on disk' }).waitFor();
     await page.locator('.banner').getByRole('button', { name: 'Refresh' }).click();
     const db = file('src/db.ts');
-    const outdated = db.locator('.file-threads.outdated');
-    await outdated.waitFor();
-    assert.match(await outdated.innerText(), /Outdated/);
-    assert.match(await outdated.locator('.anchor-snippet').innerText(), /try \{/, 'the original lines are shown');
-    await outdated.scrollIntoViewIfNeeded();
+    // The comment stays inline, re-anchored to where its code now is, and can show what changed.
+    const thread = db.locator('.thread', { hasText: 'close()' });
+    await thread.locator('.chip-outdated').waitFor();
+    await thread.getByRole('button', { name: 'Show what changed' }).click();
+    const changed = thread.locator('.what-changed');
+    await changed.waitFor();
+    assert.match((await changed.locator('tr.del').allInnerTexts()).join('\n'), /try \{/, 'the original lines are shown as removed');
+    await thread.scrollIntoViewIfNeeded();
     await shot('08-outdated');
   });
 
@@ -253,6 +257,72 @@ describe('postil UI', { timeout: 120_000 }, () => {
     assert.equal(await page.locator('table.diff-unified:not(.suggestion-diff)').count(), 0, 'split view restored everywhere');
     assert.equal(await page.locator('.tree-file.is-viewed').count(), 1, 'viewed mark restored');
     await shot('11-split-after-reload');
+  });
+
+  it('keeps a comment with its code when lines are added above it', async () => {
+    await page.locator('.scope-picker select').selectOption('all');
+    const scope = await agent<{ from: { tree: string }; to: { tree: string } }>('POST', '/api/diff/resolve', { scope: { kind: 'all' } });
+    await agent('POST', '/api/threads', {
+      from_tree: scope.from.tree, to_tree: scope.to.tree, path: 'src/text/strings.ts', side: 'new', start_line: 3,
+      body: 'Is `lower` used anywhere?',
+    });
+    fx.write('src/text/strings.ts', '// String helpers.\n\nexport const trim = (s: string) => s.trim();\nexport const upper = (s: string) => s.toUpperCase();\nexport const lower = (s: string) => s.toLowerCase();\n');
+    await page.locator('.banner', { hasText: 'Files changed on disk' }).waitFor();
+    await page.locator('.banner').getByRole('button', { name: 'Refresh' }).click();
+    const thread = file('src/text/strings.ts').locator('.thread', { hasText: 'lower' });
+    await until(async () => /L5 \(moved\)/.test(await thread.innerText()), 'the comment to follow its line to L5');
+    assert.equal(await thread.locator('.chip-outdated').count(), 0, 'moved, not outdated: the code itself is unchanged');
+  });
+
+  it('applies a suggestion from the UI', async () => {
+    const scope = await agent<{ from: { tree: string }; to: { tree: string } }>('POST', '/api/diff/resolve', { scope: { kind: 'all' } });
+    await agent('POST', '/api/threads', {
+      from_tree: scope.from.tree, to_tree: scope.to.tree, path: 'src/time.ts', side: 'new', start_line: 1,
+      body: 'Name the resolver:\n```suggestion\nexport const sleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));\n```',
+    });
+    const time = file('src/time.ts');
+    await time.scrollIntoViewIfNeeded();
+    const apply = time.getByRole('button', { name: 'Apply suggestion' });
+    await apply.waitFor();
+    await shot('12-suggestion-apply');
+    await apply.click();
+    await page.locator('.toast', { hasText: 'Suggestion applied to src/time.ts' }).waitFor();
+    await time.locator('.suggestion .chip-resolved', { hasText: 'Applied' }).waitFor();
+    assert.match(readFileSync(join(fx.dir, 'src/time.ts'), 'utf8'), /\(resolve\) => setTimeout\(resolve, ms\)/);
+  });
+
+  it('marks files that changed since the last review', async () => {
+    await page.locator('.banner').getByRole('button', { name: 'Refresh' }).click().catch(() => undefined);
+    await until(async () => (await file('src/db.ts').locator('.chip-updated').count()) === 1, 'db.ts to be marked updated');
+    assert.equal(await file('README.md').locator('.chip-updated').count(), 0, 'README has not changed since the review');
+    assert.ok((await page.locator('.tree-file', { hasText: 'db.ts' }).locator('.tree-updated').count()) === 1);
+  });
+
+  it('picks a range of commits', async () => {
+    fx.git('add', 'README.md');
+    fx.git('commit', '-q', '-m', 'Document the backoff');
+    fx.git('add', 'src/time.ts');
+    fx.git('commit', '-q', '-m', 'Add sleep');
+    await page.locator('.scope-picker select').selectOption('pick');
+    const picker = page.locator('.commit-picker');
+    await picker.locator('.commit-row').nth(2).waitFor();
+    assert.deepEqual(
+      (await picker.locator('.commit-subject').allInnerTexts()).map((t) => t.trim()),
+      ['Uncommitted changes', 'Add sleep', 'Document the backoff'],
+    );
+    await picker.locator('.commit-row', { hasText: 'Add sleep' }).click();
+    await shot('13-commit-picker');
+    await picker.getByRole('button', { name: 'Show changes' }).click();
+    await until(async () => (await page.locator('section.file').count()) === 1, 'one file in the newest commit');
+    assert.equal(await page.locator('section.file .file-path').innerText(), 'src/time.ts');
+
+    await page.locator('.scope-picker select').selectOption('pick');
+    await picker.locator('.commit-row', { hasText: 'Add sleep' }).click();
+    await picker.locator('.commit-row', { hasText: 'Document the backoff' }).click({ modifiers: ['Shift'] });
+    await picker.getByRole('button', { name: 'Show changes' }).click();
+    await until(async () => (await page.locator('section.file').count()) === 2, 'both commits');
+    assert.match(await page.locator('.scope-picker select').inputValue(), /commits/);
+    await page.locator('.scope-picker select').selectOption('all');
   });
 
   it('explains what to do when opened without a token', async () => {

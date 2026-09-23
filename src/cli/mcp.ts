@@ -1,7 +1,7 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { z } from 'zod';
-import type { AgentReview, ListenResult, ReviewView, ThreadView } from '../core/api-types.ts';
+import type { AgentReview, AppliedSuggestion, ListenResult, ReviewView, ThreadView } from '../core/api-types.ts';
 import { ApiError, NotRunningError, PostilClient } from '../core/client.ts';
 import { VERSION } from '../core/version.ts';
 import { formatPending, formatReview, formatUiThread } from './agent-format.ts';
@@ -114,6 +114,23 @@ export function createMcpServer(env: { projectDir: string; session: string | und
       withClient(async (client) => {
         await client.request('POST', `/api/agent/threads/${thread_id}/reply`, { body, needs_decision: needs_decision ?? false });
         return text(`Replied to thread ${thread_id}.`);
+      }),
+  );
+
+  server.registerTool(
+    'apply_suggestion',
+    {
+      title: 'Apply a suggestion',
+      description:
+        "Write a comment's ```suggestion block into the working tree, replacing the lines the comment is attached to. " +
+        'Refused if those lines have changed since the comment was written; then make the edit yourself. Reply to the thread afterwards.',
+      inputSchema: { comment_id: z.number().int().positive() },
+    },
+    async ({ comment_id }) =>
+      withClient(async (client) => {
+        const r = await client.request<AppliedSuggestion>('POST', `/api/agent/comments/${comment_id}/apply`);
+        const lines = r.start_line === r.end_line ? `line ${r.start_line}` : `lines ${r.start_line}-${r.end_line}`;
+        return text(`Applied the suggestion from comment ${comment_id} to ${r.path}, now at ${lines}. Reply to thread ${r.thread_id} to say so.`);
       }),
   );
 

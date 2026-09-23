@@ -1,4 +1,6 @@
 import { strict as assert } from 'node:assert';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { after, before, beforeEach, describe, it } from 'node:test';
 import type { Channel, PostilEvent } from '../src/core/events.ts';
 import { Postil } from '../src/core/postil.ts';
@@ -193,9 +195,9 @@ describe('the review loop', () => {
     const review = await postil.reviewForAgent(reviewId);
     assert.equal(review.status, 'in_progress');
     assert.equal(review.body, 'First pass.');
-    assert.deepEqual(review.threads.map((t) => [t.id, t.awaiting_reply, t.file_changed_since_comment]), [
-      [dbThread, true, false],
-      [retryThread, true, false],
+    assert.deepEqual(review.threads.map((t) => [t.id, t.awaiting_reply, t.anchor.state]), [
+      [dbThread, true, 'current'],
+      [retryThread, true, 'current'],
     ]);
     assert.ok(rec.types().includes('review.started'));
   });
@@ -216,7 +218,8 @@ describe('the review loop', () => {
 
     const review = await postil.reviewForAgent(reviewId);
     const retry = review.threads.find((x) => x.id === retryThread)!;
-    assert.deepEqual([retry.awaiting_reply, retry.file_changed_since_comment], [false, true]);
+    assert.deepEqual([retry.awaiting_reply, retry.anchor.state], [false, 'outdated']);
+    assert.equal(retry.anchor.current_text, 'await backoff(attempt);\nline 13');
     await rejectsWith(postil.completeReview(reviewId, 'done'), 'unanswered_threads');
   });
 
@@ -502,6 +505,138 @@ describe('agent sessions', () => {
   it('rejects malformed session ids', async () => {
     try {
       await rejectsWith(() => postil.listen('../../etc'), 'invalid_session');
+    } finally {
+      cleanup();
+    }
+  });
+});
+
+describe('anchoring threads to a later diff', () => {
+  it('reports current, moved, outdated, renamed and gone threads', async () => {
+    const fx = makeFixture();
+    try {
+      fx.write('stable.txt', numbered(20));
+      fx.write('shift.txt', numbered(20));
+      fx.write('edit.txt', numbered(20));
+      fx.write('rename-me.txt', numbered(20));
+      fx.write('delete-me.txt', numbered(20));
+      fx.commit('base');
+      const postil = await Postil.open(fx.dir);
+      for (const f of ['stable', 'shift', 'edit', 'rename-me', 'delete-me']) {
+        fx.write(`${f}.txt`, numbered(20, { 1: `${f} changed` }));
+      }
+      const s1 = await postil.resolveScope({ kind: 'all' });
+      const ids: Record<string, number> = {};
+      for (const f of ['stable', 'shift', 'edit', 'rename-me', 'delete-me']) {
+        ids[f] = (await postil.createThread({ from_tree: s1.from.tree, to_tree: s1.to.tree, path: `${f}.txt`, side: 'new', start_line: 10, end_line: 11, body: f })).id;
+      }
+
+      // Claude's next round of edits.
+      fx.write('shift.txt', `inserted\n${numbered(20, { 1: 'shift changed' })}`);
+      fx.write('edit.txt', numbered(20, { 1: 'edit changed', 11: 'eleven' }));
+      fx.git('mv', 'rename-me.txt', 'renamed.txt');
+      fx.remove('delete-me.txt');
+
+      const s2 = await postil.resolveScope({ kind: 'all' });
+      const threads = await postil.threadsIn({ from_tree: s2.from.tree, to_tree: s2.to.tree });
+      const anchor = (f: string) => threads.find((t) => t.id === ids[f])!.anchor!;
+
+      assert.deepEqual(anchor('stable'), { state: 'current', path: 'stable.txt', start_line: 10, end_line: 11 });
+      assert.deepEqual(anchor('shift'), { state: 'moved', path: 'shift.txt', start_line: 11, end_line: 12 });
+      assert.deepEqual(anchor('edit'), { state: 'outdated', path: 'edit.txt', start_line: 10, end_line: 11, current_text: 'line 10\neleven' });
+      assert.deepEqual(anchor('rename-me'), { state: 'current', path: 'renamed.txt', start_line: 10, end_line: 11 });
+      assert.deepEqual(anchor('delete-me'), { state: 'gone', path: 'delete-me.txt', start_line: null, end_line: null });
+      postil.close();
+    } finally {
+      fx.cleanup();
+    }
+  });
+});
+
+describe('applying suggestions', () => {
+  let fx: Fixture;
+  let postil: Postil;
+  const suggest = async (path: string, start: number, end: number, replacement: string) => {
+    const s = await postil.resolveScope({ kind: 'all' });
+    const t = await postil.createThread({
+      from_tree: s.from.tree, to_tree: s.to.tree, path, side: 'new', start_line: start, end_line: end,
+      body: `How about:\n\`\`\`suggestion\n${replacement}\n\`\`\``,
+    });
+    return t.comments[0]!.id;
+  };
+  beforeEach(async () => {
+    fx = makeFixture();
+    fx.write('a.ts', numbered(10));
+    fx.write('crlf.txt', 'one\r\ntwo\r\nthree\r\n');
+    fx.commit('base');
+    postil = await Postil.open(fx.dir);
+    fx.write('a.ts', numbered(10, { 5: 'five' }));
+    fx.write('crlf.txt', 'one\r\nTWO\r\nthree\r\n');
+  });
+  const cleanup = () => { postil.close(); fx.cleanup(); };
+  const read = (p: string) => readFileSync(join(fx.dir, p), 'utf8');
+
+  it('replaces the anchored lines and records that it was applied', async () => {
+    try {
+      const id = await suggest('a.ts', 5, 6, 'FIVE\nSIX\nSIX AND A HALF');
+      const r = await postil.applySuggestion(id);
+      assert.deepEqual([r.path, r.start_line, r.end_line], ['a.ts', 5, 7]);
+      assert.equal(read('a.ts'), numbered(10, { 5: 'FIVE', 6: 'SIX\nSIX AND A HALF' }));
+      assert.ok(postil.store.getComment(id)?.applied_at);
+      await rejectsWith(postil.applySuggestion(id), 'already_applied');
+    } finally {
+      cleanup();
+    }
+  });
+
+  it('follows lines that moved, but refuses when they changed', async () => {
+    try {
+      const moved = await suggest('a.ts', 8, 8, 'EIGHT');
+      const changed = await suggest('a.ts', 5, 5, 'FIVE');
+      fx.write('a.ts', `// header\n${numbered(10, { 5: 'five, edited by Claude' })}`);
+      await rejectsWith(postil.applySuggestion(changed), 'suggestion_outdated');
+      await postil.applySuggestion(moved);
+      assert.match(read('a.ts'), /^line 7\nEIGHT\nline 9$/m);
+    } finally {
+      cleanup();
+    }
+  });
+
+  it('keeps CRLF line endings and supports deleting lines', async () => {
+    try {
+      const id = await suggest('crlf.txt', 2, 2, '');
+      // An empty suggestion block deletes the lines.
+      postil.store.db.prepare('UPDATE comment SET body = :b WHERE id = :id').run({ b: '```suggestion\n```', id });
+      await postil.applySuggestion(id);
+      assert.equal(read('crlf.txt'), 'one\r\nthree\r\n');
+    } finally {
+      cleanup();
+    }
+  });
+
+  it('rejects comments without exactly one suggestion', async () => {
+    try {
+      const s = await postil.resolveScope({ kind: 'all' });
+      const plain = await postil.createThread({ from_tree: s.from.tree, to_tree: s.to.tree, path: 'a.ts', side: 'new', start_line: 1, body: 'just a remark' });
+      await rejectsWith(postil.applySuggestion(plain.comments[0]!.id), 'no_suggestion');
+      const two = await postil.createThread({
+        from_tree: s.from.tree, to_tree: s.to.tree, path: 'a.ts', side: 'new', start_line: 2,
+        body: '```suggestion\nx\n```\nor\n```suggestion\ny\n```',
+      });
+      await rejectsWith(postil.applySuggestion(two.comments[0]!.id), 'ambiguous_suggestion');
+    } finally {
+      cleanup();
+    }
+  });
+
+  it('lists files changed since the last review for "updated" badges', async () => {
+    try {
+      assert.equal(await postil.sinceReview((await postil.resolveScope({ kind: 'all' })).to.tree), null);
+      await suggest('a.ts', 1, 1, 'x');
+      await postil.submitReview();
+      fx.write('crlf.txt', 'changed after review\n');
+      const since = await postil.sinceReview((await postil.resolveScope({ kind: 'all' })).to.tree);
+      assert.deepEqual(since?.changed, ['crlf.txt']);
     } finally {
       cleanup();
     }

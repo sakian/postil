@@ -1,20 +1,31 @@
+import { useState } from 'react';
 import type { Scope } from '../../../src/core/api-types.ts';
-import { basename } from '../format.ts';
+import { basename, shortSha } from '../format.ts';
 import { useStore } from '../store.ts';
+import { CommitPicker } from './CommitPicker.tsx';
 
 function scopeValue(scope: Scope): string {
-  return scope.kind === 'since_review' ? `since_review:${scope.review_id ?? 'latest'}` : scope.kind;
+  if (scope.kind === 'since_review') return `since_review:${scope.review_id ?? 'latest'}`;
+  if (scope.kind === 'commits') return 'commits';
+  return scope.kind;
+}
+
+function commitsLabel(scope: Extract<Scope, { kind: 'commits' }>): string {
+  const to = scope.to === 'worktree' ? 'uncommitted' : shortSha(scope.to);
+  return scope.from === scope.to ? `Commit ${shortSha(scope.from)}` : `Commits ${shortSha(scope.from)} … ${to}`;
 }
 
 function ScopePicker() {
   const scope = useStore((s) => s.scope);
   const reviews = useStore((s) => s.reviews);
   const { setScope } = useStore.getState();
+  const [picking, setPicking] = useState(false);
   const submitted = reviews.filter((r) => r.status !== 'draft').sort((a, b) => b.id - a.id);
   const latest = submitted[0];
 
   const onChange = (value: string) => {
-    if (value === 'all' || value === 'uncommitted') void setScope({ kind: value });
+    if (value === 'pick') setPicking(true);
+    else if (value === 'all' || value === 'uncommitted') void setScope({ kind: value });
     else if (value.startsWith('since_review:')) {
       const id = value.split(':')[1];
       void setScope(id === 'latest' ? { kind: 'since_review' } : { kind: 'since_review', review_id: Number(id) });
@@ -28,15 +39,20 @@ function ScopePicker() {
     ['since_review:latest', latest ? `Changes since last review (#${latest.id})` : 'Changes since last review', !latest],
     ...submitted.slice(1, 6).map((r): [string, string] => [`since_review:${r.id}`, `Changes since review #${r.id}`]),
   ];
-  if (!options.some(([v]) => v === current)) options.push([current, `Changes since review #${scope.kind === 'since_review' ? scope.review_id : ''}`]);
+  if (scope.kind === 'commits') options.push(['commits', commitsLabel(scope)]);
+  else if (!options.some(([v]) => v === current)) options.push([current, `Changes since review #${scope.kind === 'since_review' ? scope.review_id : ''}`]);
+  options.push(['pick', 'Choose commits…']);
 
   return (
-    <label className="scope-picker">
-      <span className="sr-only">Changes to show</span>
-      <select value={current} onChange={(e) => onChange(e.target.value)}>
-        {options.map(([value, label, disabled]) => <option key={value} value={value} disabled={disabled}>{label}</option>)}
-      </select>
-    </label>
+    <span className="scope-wrap">
+      <label className="scope-picker">
+        <span className="sr-only">Changes to show</span>
+        <select value={current} onChange={(e) => onChange(e.target.value)}>
+          {options.map(([value, label, disabled]) => <option key={value} value={value} disabled={disabled}>{label}</option>)}
+        </select>
+      </label>
+      {picking && <CommitPicker onClose={() => setPicking(false)} />}
+    </span>
   );
 }
 

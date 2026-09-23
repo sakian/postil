@@ -47,15 +47,17 @@ function FileView({ file, threads }: { file: FileChange; threads: ThreadView[] }
   const groups = useMemo(() => {
     const inline: ThreadView[] = [];
     const fileLevel: ThreadView[] = [];
-    const outdated: ThreadView[] = [];
+    const gone: ThreadView[] = [];
     for (const t of threads) {
       const p = placement(t, file);
       if (p === 'inline') inline.push(t);
       else if (p === 'file') fileLevel.push(t);
-      else if (p === 'outdated') outdated.push(t);
+      else if (p === 'gone') gone.push(t);
     }
-    return { inline, fileLevel, outdated };
+    return { inline, fileLevel, gone };
   }, [threads, file]);
+  const updated = useStore((s) => s.scope.kind !== 'since_review' && (s.resolved?.since_review?.changed.includes(file.path) ?? false));
+  const sinceReviewId = useStore((s) => s.resolved?.since_review?.review_id);
 
   // Bring this file into view when a thread in it is focused from the threads list.
   useEffect(() => {
@@ -100,6 +102,7 @@ function FileView({ file, threads }: { file: FileChange; threads: ThreadView[] }
           <span className="file-stats"><span className="adds">+{file.additions}</span> <span className="dels">−{file.deletions}</span></span>
         )}
         {openCount > 0 && <span className="chip chip-comments" title={`${openCount} open conversation(s)`}><Icon name="comment" size={12} /> {openCount}</span>}
+        {updated && <span className="chip chip-updated" title={`Changed since you submitted review #${sinceReviewId}`}>Updated</span>}
         <span className="spacer" />
         {ready && ready.new_lines !== null && ready.hunks.length > 0 && !folded && (
           <>
@@ -119,10 +122,10 @@ function FileView({ file, threads }: { file: FileChange; threads: ThreadView[] }
       </header>
       {!folded && (
         <div className="file-body">
-          {groups.outdated.length > 0 && (
+          {groups.gone.length > 0 && (
             <div className="file-threads outdated">
-              <div className="file-threads-title">Comments on an earlier version of this file</div>
-              {groups.outdated.map((t) => <ThreadWidget key={t.id} thread={t} outdated />)}
+              <div className="file-threads-title">Comments on code that no longer exists</div>
+              {groups.gone.map((t) => <ThreadWidget key={t.id} thread={t} />)}
             </div>
           )}
           {groups.fileLevel.length > 0 && (

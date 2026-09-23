@@ -18,6 +18,10 @@ try {
   const reviewId = await submitReview(fx.dir, 'Two things before I merge this.', [
     { path: 'src/db.ts', line: 'params: unknown[] = []', text: 'Rename `params` to `bindings` in this function.' },
     { path: 'src/retry.ts', line: 'Math.random()', text: 'Why add random jitter to the delay? One sentence is enough.' },
+    {
+      path: 'src/time.ts', line: 'export const sleep',
+      text: 'Type the promise:\n```suggestion\nexport const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));\n```',
+    },
   ]);
   console.log(`submitted review #${reviewId}; starting Claude`);
 
@@ -47,6 +51,8 @@ try {
   assert.doesNotMatch(db, /\bparams\b/);
   assert.ok(!calls.some((c) => /resolve/i.test(c.name)), 'Claude does not resolve threads');
   assert.ok(calls.some((c) => c.name === 'Monitor'), 'Claude armed the monitor to keep listening');
+  assert.ok(calls.some((c) => c.name.endsWith('__apply_suggestion')), 'Claude applied the suggestion with the tool');
+  assert.match(readFileSync(join(fx.dir, 'src/time.ts'), 'utf8'), /new Promise<void>/);
   console.log('\nLIVE TEST 1 PASSED');
 } finally {
   try { postil(fx.dir, path, 'stop'); } catch { /* already stopped */ }

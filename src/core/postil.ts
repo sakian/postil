@@ -1,10 +1,13 @@
 import { createHash } from 'node:crypto';
-import { join } from 'node:path';
+import { lstat, readFile, rename, writeFile } from 'node:fs/promises';
+import { join, resolve, sep } from 'node:path';
 import { Store } from '../db/store.ts';
 import type { CommentRow, ReviewRow, Side, ThreadRow } from '../db/types.ts';
 import { splitLines } from '../git/parse.ts';
 import { assertOid, Repo } from '../git/repo.ts';
-import type { FileChange } from '../git/types.ts';
+import type { FileChange, Hunk } from '../git/types.ts';
+import { reanchor, type Anchor } from './anchors.ts';
+import { extractSuggestion, hasSuggestion, replaceLines } from './suggestion.ts';
 import { EventBus } from './events.ts';
 import { agentHint } from './hints.ts';
 
@@ -12,7 +15,7 @@ export { agentHint } from './hints.ts';
 import { HttpError } from './util.ts';
 
 import type {
-  AgentReview, AgentThread, BaseConfig, BaseInfo, CommentView, CommitsInfo, Endpoint, FileDiff, HookStatus, ListenResult,
+  AgentReview, AgentThread, AppliedSuggestion, BaseConfig, BaseInfo, CommentView, CommitsInfo, Endpoint, FileDiff, HookStatus, ListenResult,
   NewThreadInput, ResolvedScope, ReviewView, Scope, ThreadView,
 } from './api-types.ts';
 
@@ -55,6 +58,9 @@ export class Postil {
   readonly store: Store;
   readonly bus: EventBus;
   private lastLiveTree: string | null = null;
+  /** Zero-context hunks between two blobs, and renames between two trees. Both are immutable, so cached. */
+  private readonly lineMaps = new Map<string, Hunk[]>();
+  private readonly renames = new Map<string, Map<string, string>>();
   /** Open agent event sockets per Claude session: a session is "live" while its monitor is armed. */
   private readonly liveAgents = new Map<string, number>();
 
@@ -268,6 +274,140 @@ export class Postil {
     const all = splitLines(await this.repo.readBlob(oid));
     const last = Math.min(end, all.length);
     return { oid, start, end: last, total: all.length, lines: start > last ? [] : all.slice(start - 1, last) };
+  }
+
+  // ------------------------------------------------------------------ anchors
+
+  private async zeroContextHunks(a: string, b: string): Promise<Hunk[]> {
+    const key = `${a}..${b}`;
+    let hunks = this.lineMaps.get(key);
+    if (!hunks) {
+      hunks = (await this.repo.diffBlobs(a, b, { context: 0 })).hunks;
+      if (this.lineMaps.size > 2000) this.lineMaps.clear();
+      this.lineMaps.set(key, hunks);
+    }
+    return hunks;
+  }
+
+  /** The path `path` was renamed to between two trees, if it was. */
+  private async renamedTo(fromTree: string, toTree: string, path: string): Promise<string | null> {
+    const key = `${fromTree}..${toTree}`;
+    let map = this.renames.get(key);
+    if (!map) {
+      map = new Map();
+      for (const f of await this.repo.diffFiles(fromTree, toTree)) {
+        if (f.status === 'renamed' && f.old_path && f.new_path) map.set(f.old_path, f.new_path);
+      }
+      if (this.renames.size > 200) this.renames.clear();
+      this.renames.set(key, map);
+    }
+    return map.get(path) ?? null;
+  }
+
+  /** Where a thread's lines are in the given diff: on its new side for new-side threads, old side otherwise. */
+  async anchorFor(thread: ThreadRow, target: { from_tree: string; to_tree: string }): Promise<Anchor> {
+    const tree = thread.side === 'new' ? target.to_tree : target.from_tree;
+    const origin = thread.side === 'new' ? thread.to_tree : thread.from_tree;
+    let path = thread.path;
+    let entry = await this.repo.entryAt(tree, path);
+    if (!entry) {
+      const renamed = await this.renamedTo(origin, tree, path);
+      if (renamed) {
+        path = renamed;
+        entry = await this.repo.entryAt(tree, path);
+      }
+    }
+    if (!entry || entry.type !== 'blob') return { state: 'gone', path, start_line: null, end_line: null };
+    const start = thread.start_line;
+    const end = thread.end_line;
+    if (start === null || end === null) return { state: 'current', path, start_line: null, end_line: null };
+    if (entry.oid === thread.blob) return { state: 'current', path, start_line: start, end_line: end };
+
+    const info = await this.repo.blobInfo(entry.oid);
+    if (info.binary) return { state: 'gone', path, start_line: null, end_line: null };
+    const r = reanchor(await this.zeroContextHunks(thread.blob, entry.oid), start, end, info.lines);
+    if (r.state === 'gone') return { state: 'gone', path, start_line: null, end_line: null };
+    const anchor: Anchor = { state: r.state, path, start_line: r.start, end_line: r.end };
+    if (r.state === 'outdated') {
+      anchor.current_text = splitLines(await this.repo.readBlob(entry.oid)).slice(r.start - 1, r.end).join('\n');
+    }
+    return anchor;
+  }
+
+  /** Threads with their anchors in a diff, for placing them in the UI. */
+  async threadsIn(target: { from_tree: string; to_tree: string }, filter: { status?: 'open' | 'resolved'; path?: string } = {}): Promise<ThreadView[]> {
+    assertOid(target.from_tree, 'tree id');
+    assertOid(target.to_tree, 'tree id');
+    const rows = this.store.listThreads(filter);
+    const views = this.threadViews(rows, { includeDrafts: true });
+    const byId = new Map(rows.map((r) => [r.id, r]));
+    return Promise.all(views.map(async (v) => ({ ...v, anchor: await this.anchorFor(byId.get(v.id)!, target) })));
+  }
+
+  /** Paths changed on the "to" side since the latest submitted review, for "updated" badges. */
+  async sinceReview(toTree: string): Promise<{ review_id: number; changed: string[] } | null> {
+    const review = this.store.latestSubmittedReview();
+    if (!review?.submit_tree) return null;
+    const files = await this.repo.diffFiles(review.submit_tree, assertOid(toTree, 'tree id'));
+    return { review_id: review.id, changed: files.map((f) => f.new_path ?? f.old_path ?? f.path) };
+  }
+
+  // ------------------------------------------------------------------ suggestions
+
+  /**
+   * Write a comment's suggestion into the working tree, replacing the lines it is attached to.
+   * Refused unless those lines are still exactly as they were when the comment was written, so
+   * a suggestion can never overwrite code that has since changed.
+   */
+  async applySuggestion(commentId: number): Promise<AppliedSuggestion> {
+    const comment = this.store.getComment(commentId);
+    if (!comment) throw new HttpError(404, `no comment ${commentId}`, 'unknown_comment');
+    if (comment.applied_at) throw new HttpError(409, `the suggestion in comment ${commentId} was already applied`, 'already_applied');
+    let suggestion: string | null;
+    try {
+      suggestion = extractSuggestion(comment.body);
+    } catch (e) {
+      throw new HttpError(422, (e as Error).message, 'ambiguous_suggestion');
+    }
+    if (suggestion === null) throw new HttpError(422, `comment ${commentId} has no suggestion`, 'no_suggestion');
+    const thread = this.store.getThread(comment.thread_id)!;
+    if (thread.side !== 'new' || thread.start_line === null || thread.end_line === null) {
+      throw new HttpError(422, 'only suggestions on lines of the new code can be applied', 'not_applicable');
+    }
+
+    const live = await this.liveTree();
+    const anchor = await this.anchorFor(thread, { from_tree: thread.from_tree, to_tree: live });
+    if ((anchor.state !== 'current' && anchor.state !== 'moved') || anchor.start_line === null || anchor.end_line === null) {
+      throw new HttpError(409, 'the lines this suggestion replaces have changed since it was written', 'suggestion_outdated');
+    }
+
+    const file = resolve(this.repo.root, anchor.path);
+    if (!file.startsWith(this.repo.root + sep)) throw new HttpError(422, 'path is outside the repository', 'bad_path');
+    const stat = await lstat(file).catch(() => null);
+    if (!stat?.isFile()) throw new HttpError(409, `${anchor.path} is not a regular file`, 'not_a_file');
+
+    // Re-check against the bytes on disk: the snapshot above may already be a moment old.
+    // Compare without carriage returns: git may store LF while the disk has CRLF (core.autocrlf), or
+    // store CRLF as-is, so either side can carry them.
+    const text = await readFile(file, 'utf8');
+    const bare = (lines: string) => lines.split('\n').map((l) => l.replace(/\r$/, '')).join('\n');
+    const current = text.split('\n').slice(anchor.start_line - 1, anchor.end_line).join('\n');
+    if (bare(current) !== bare(thread.anchor_text)) {
+      throw new HttpError(409, 'the lines this suggestion replaces have changed since it was written', 'suggestion_outdated');
+    }
+    const tmp = `${file}.postil-${process.pid}.tmp`;
+    await writeFile(tmp, replaceLines(text, anchor.start_line, anchor.end_line, suggestion), { mode: stat.mode });
+    await rename(tmp, file);
+
+    this.store.markApplied(commentId);
+    const added = suggestion === '' ? 0 : suggestion.split('\n').length;
+    const result: AppliedSuggestion = {
+      comment_id: commentId, thread_id: thread.id, path: anchor.path,
+      start_line: anchor.start_line, end_line: anchor.start_line + Math.max(added, 1) - 1,
+    };
+    this.bus.emit({ type: 'suggestion.applied', ...result });
+    await this.liveTree();
+    return result;
   }
 
   // ------------------------------------------------------------------ views
@@ -577,17 +717,18 @@ export class Postil {
 
     const result: AgentThread[] = [];
     for (const t of threads) {
-      const reference = t.side === 'new' ? t.blob : ((await this.repo.entryAt(t.to_tree, t.path))?.oid ?? null);
-      const current = (await this.repo.entryAt(live, t.path))?.oid ?? null;
       result.push({
         id: t.id, path: t.path, side: t.side, start_line: t.start_line, end_line: t.end_line,
         anchor_text: t.anchor_text, status: t.status, needs_decision: t.needs_decision,
         awaiting_reply: unanswered.has(t.id),
-        file_changed_since_comment: reference !== current,
-        file_exists: current !== null,
+        // Where the commented code is in the working tree now.
+        anchor: await this.anchorFor(t, { from_tree: t.from_tree, to_tree: live }),
         comments: comments
           .filter((c) => c.thread_id === t.id)
-          .map((c) => ({ id: c.id, author: c.author, body: c.body, created_at: c.created_at, in_this_review: c.review_id === reviewId })),
+          .map((c) => ({
+            id: c.id, author: c.author, body: c.body, created_at: c.created_at, in_this_review: c.review_id === reviewId,
+            suggestion: hasSuggestion(c.body), applied: c.applied_at !== null,
+          })),
       });
     }
     const fresh = this.store.getReview(reviewId)!;

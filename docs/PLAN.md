@@ -74,7 +74,7 @@ Everything you listed, and where it lands.
 | Faster expansion | Expand buttons on hover, keyboard `e` on a gap, expand-all per file, expand-all in file tree context menu. |
 | Recollapse | Every expanded gap gets a collapse handle; `E` collapses all in the file; file header has expand-all/collapse-all. |
 | Collapse-all in tree | Button in the tree header, plus per-directory collapse. |
-| Old comments on changed code | Threads anchor to a blob SHA. When the blob changes, the thread becomes "outdated" and is re-anchored by diffing the old blob to the new one. Inline view still shows it at the re-anchored position with an "outdated" chip; clicking it opens a three-part view: the comment, the lines as they were when commented, and the same region now. The Threads panel has the same view. |
+| Old comments on changed code | Threads anchor to a blob SHA and are re-anchored by diffing that blob to the current one. Unchanged lines that moved keep the comment in place at their new position. Changed lines mark it Outdated at the position of the code that replaced them, with a "Show what changed" diff of then against now. The Threads panel has the same view and an Outdated filter. (Built in Phase 4.) |
 
 ## 4. Architecture
 
@@ -235,12 +235,28 @@ Verified with real Claude sessions (`e2e/live/`, run by hand since they cost mon
 - Failure path: with `postil` missing from PATH, Claude explained the problem and gave the
   `postil link` command instead of failing silently.
 
-### Phase 4: scope and history
+### Phase 4: scope and history — DONE 2026-09-23
 
-- Scope selector with commit picker and "since last review".
-- Outdated thread re-anchoring and the old-vs-new context view.
-- Changed-since-review badges from the file watcher.
-- Apply suggestion (UI button and MCP tool).
+- **Re-anchoring.** A comment's lines are mapped through a zero-context diff from the blob it was
+  written on to the current one, following renames. Four states: *current*; *moved* (lines
+  unchanged, shifted by edits elsewhere; shown at the new position with no warning, since the
+  comment is still accurate); *outdated* (the lines themselves changed; shown where that code is
+  now, with a "Show what changed" diff of the lines then against the lines now); *gone* (grouped
+  at the top of the file as "code that no longer exists"). Claude's view of a review uses the same
+  anchors, so it is told whether code moved or changed, and sees the current code.
+- **Commit picker.** "Choose commits…" in the scope menu lists commits since the base plus
+  uncommitted changes; click one, shift-click for a contiguous range.
+- **Updated badges.** Files whose content changed after your last submitted review are marked in
+  the tree and the file header. The diff response carries the list; the working-tree poller and
+  the refresh banner keep it current.
+- **Apply suggestion.** An Apply button on suggestion blocks, and an `apply_suggestion` MCP tool.
+  Applying is refused unless the target lines are exactly as they were when suggested, checked
+  against the file on disk just before writing, so it cannot overwrite a concurrent edit. Line
+  endings, including CRLF, and a missing final newline are preserved; an empty suggestion deletes
+  the lines.
+
+Verified by service tests for each anchor state (including renames and deletions), 19 browser
+tests, and a live run in which Claude applied a suggestion with the tool and replied.
 
 ### Phase 5: polish
 

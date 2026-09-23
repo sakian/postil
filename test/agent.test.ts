@@ -63,9 +63,9 @@ describe('MCP server and hooks against a live review server', () => {
     fx?.cleanup();
   });
 
-  it('offers the six review tools', async () => {
+  it('offers the review tools', async () => {
     const { tools } = await mcp.listTools();
-    assert.deepEqual(tools.map((t) => t.name).sort(), ['complete_review', 'connect', 'get_review', 'get_thread', 'list_pending', 'reply']);
+    assert.deepEqual(tools.map((t) => t.name).sort(), ['apply_suggestion', 'complete_review', 'connect', 'get_review', 'get_thread', 'list_pending', 'reply']);
   });
 
   it('keeps hooks silent in a session that is not listening', async () => {
@@ -257,8 +257,8 @@ describe('review formatting', () => {
       id: 1, status: 'in_progress', body: '', submitted_at: null,
       threads: [{
         id: 2, path: 'a.md', side: 'new', start_line: 1, end_line: 1, anchor_text: 'x ```` y', status: 'open',
-        needs_decision: false, awaiting_reply: true, file_changed_since_comment: false, file_exists: true,
-        comments: [{ id: 3, author: 'user', body: 'hm', created_at: '', in_this_review: true }],
+        needs_decision: false, awaiting_reply: true, anchor: { state: 'current', path: 'a.md', start_line: 1, end_line: 1 },
+        comments: [{ id: 3, author: 'user', body: 'hm', created_at: '', in_this_review: true, suggestion: false, applied: false }],
       }],
     });
     assert.match(out, /`````\nx ```` y\n`````/);

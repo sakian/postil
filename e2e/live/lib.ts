@@ -74,6 +74,7 @@ export function reviewAddressed(cwd: string, id: number, timeoutMs: number): Pro
 export const ALLOWED_TOOLS = [
   'mcp__plugin_postil_postil__connect', 'mcp__plugin_postil_postil__list_pending', 'mcp__plugin_postil_postil__get_review',
   'mcp__plugin_postil_postil__get_thread', 'mcp__plugin_postil_postil__reply', 'mcp__plugin_postil_postil__complete_review',
+  'mcp__plugin_postil_postil__apply_suggestion',
   'Read', 'Edit', 'Write', 'Grep', 'Glob', 'Monitor', 'Skill', 'Bash(postil:*)', 'Bash(postil wait)', 'Bash(git diff:*)', 'Bash(git status:*)',
 ];
 

@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import type {
-  BaseInfo, FileChange, FileDiff, Health, ResolvedDiff, ReviewView, Scope, Side, ThreadView,
+  BaseInfo, CommitsInfo, FileChange, FileDiff, Health, ResolvedDiff, ReviewView, Scope, Side, ThreadView,
 } from '../../src/core/api-types.ts';
 import { api, ApiError } from './api.ts';
 import { diffKey, markKey, viewedBlob } from './format.ts';
@@ -43,6 +43,7 @@ interface State {
   diffs: Record<string, Loadable<FileDiff>>;
   lines: Record<string, Loadable<string[]>>;
   threads: ThreadView[];
+  commits: Loadable<CommitsInfo> | null;
   reviews: ReviewView[];
   draft: ReviewView | null;
   viewed: Set<string>;
@@ -67,6 +68,8 @@ interface Actions {
   refreshThreads(): Promise<void>;
   refreshReviews(): Promise<void>;
   refreshMarks(): Promise<void>;
+  loadCommits(): Promise<void>;
+  applySuggestion(commentId: number): Promise<void>;
   loadDiff(file: FileChange, force?: boolean): Promise<void>;
   loadLines(oid: string, total: number): Promise<string[] | null>;
 
@@ -138,6 +141,7 @@ export const useStore = create<Store>()((set, get) => {
     diffs: {},
     lines: {},
     threads: [],
+    commits: null,
     reviews: [],
     draft: null,
     viewed: new Set(),
@@ -168,7 +172,7 @@ export const useStore = create<Store>()((set, get) => {
           expanded: expanded.value ?? {},
           collapsedDirs: tree.value ?? [],
         });
-        await Promise.all([get().refresh(), get().refreshThreads(), get().refreshReviews(), get().refreshMarks()]);
+        await Promise.all([get().refresh(), get().refreshReviews(), get().refreshMarks()]);
       } catch (e) {
         fail(e);
       } finally {
@@ -187,6 +191,8 @@ export const useStore = create<Store>()((set, get) => {
       try {
         const [resolved, base] = await Promise.all([api.resolve(get().scope), api.base()]);
         set({ resolved, base, stale: false });
+        // Thread positions depend on the diff, so re-anchor them to the new one.
+        await get().refreshThreads();
       } catch (e) {
         if (e instanceof ApiError && e.code === 'no_review' && get().scope.kind === 'since_review') {
           // The review this scope pointed at is gone or never existed; fall back rather than strand the user.
@@ -202,8 +208,9 @@ export const useStore = create<Store>()((set, get) => {
     },
 
     async refreshThreads() {
+      const r = get().resolved;
       try {
-        set({ threads: (await api.threads()).threads });
+        set({ threads: (await api.threads(r ? { from: r.from.tree, to: r.to.tree } : undefined)).threads });
       } catch (e) {
         fail(e);
       }
@@ -222,6 +229,26 @@ export const useStore = create<Store>()((set, get) => {
       try {
         const { marks } = await api.fileMarks();
         set({ viewed: new Set(marks.map((m) => markKey(m.path, m.blob))) });
+      } catch (e) {
+        fail(e);
+      }
+    },
+
+    async loadCommits() {
+      set({ commits: { state: 'loading' } });
+      try {
+        set({ commits: { state: 'ready', value: await api.commits() } });
+      } catch (e) {
+        set({ commits: { state: 'error', message: errorText(e) } });
+      }
+    },
+
+    async applySuggestion(commentId) {
+      try {
+        const r = await api.applySuggestion(commentId);
+        const lines = r.start_line === r.end_line ? `line ${r.start_line}` : `lines ${r.start_line}–${r.end_line}`;
+        get().toast(`Suggestion applied to ${r.path}, ${lines}.`, { label: 'Refresh diff', run: () => void get().refresh() });
+        await get().refreshThreads();
       } catch (e) {
         fail(e);
       }
@@ -470,6 +497,9 @@ export const useStore = create<Store>()((set, get) => {
         }
         case 'agents.changed':
           set({ listening: Number(e.listening) || 0 });
+          break;
+        case 'suggestion.applied':
+          void s.refreshThreads();
           break;
         case 'marks.changed':
           void s.refreshMarks();

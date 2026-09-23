@@ -3,6 +3,7 @@ import type { FileChange, FileDiff, Side, ThreadView } from '../../../src/core/a
 import { normalize, type Range } from '../lib/ranges.ts';
 import { buildRows, EXPAND_STEP, gaps, oldToNewInGaps, toSplit, type Row, type SplitRow } from '../lib/rows.ts';
 import { isSelected, splitSelection, unifiedSelection, type Selection } from '../lib/selection.ts';
+import { currentLines } from '../format.ts';
 import { useStore, type Target } from '../store.ts';
 import { Icon } from './icons.tsx';
 import { NewThreadComposer, ThreadWidget } from './Thread.tsx';
@@ -34,10 +35,11 @@ export function DiffTable({ file, diff, threads }: Props) {
   const forced = useMemo(() => {
     const out: Range[] = [];
     for (const t of threads) {
-      if (t.start_line === null || t.end_line === null) continue;
-      if (t.side === 'new') out.push([t.start_line, t.end_line]);
+      const { start, end } = currentLines(t);
+      if (start === null || end === null) continue;
+      if (t.side === 'new') out.push([start, end]);
       else {
-        for (let n = t.start_line; n <= t.end_line; n++) {
+        for (let n = start; n <= end; n++) {
           const mapped = oldToNewInGaps(allGaps, n);
           if (mapped !== null) out.push([mapped, mapped]);
         }
@@ -59,7 +61,7 @@ export function DiffTable({ file, diff, threads }: Props) {
   const threadsAt = useMemo(() => {
     const m = new Map<string, ThreadView[]>();
     for (const t of threads) {
-      const key = `${t.side}:${t.end_line}`;
+      const key = `${t.side}:${currentLines(t).end}`;
       m.set(key, [...(m.get(key) ?? []), t]);
     }
     return m;

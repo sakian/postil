@@ -1,4 +1,5 @@
 import type { AgentReview, AgentThread, ReviewView, ThreadView } from '../core/api-types.ts';
+import { hasSuggestion } from '../core/suggestion.ts';
 
 /** A code fence longer than any backtick run inside the text, so comment content cannot break out of it. */
 function fence(text: string, lang = ''): string {
@@ -26,15 +27,25 @@ export function formatThread(t: AgentThread): string {
   const state = t.status === 'resolved' ? 'resolved' : t.awaiting_reply ? 'NEEDS YOUR REPLY' : 'answered';
   out.push(`## Thread ${t.id}: ${location(t)} [${state}]`);
   if (t.needs_decision) out.push('You previously asked the user to decide something here.');
-  if (!t.file_exists) out.push('The file no longer exists in the working tree.');
-  else if (t.file_changed_since_comment) out.push('The file has changed since this comment was written. Read the current version before editing.');
+  const a = t.anchor;
+  const where = a.start_line === null ? a.path : a.start_line === a.end_line ? `${a.path}:${a.start_line}` : `${a.path}:${a.start_line}-${a.end_line}`;
+  if (a.state === 'gone') out.push('That code no longer exists in the working tree.');
+  else if (a.state === 'moved') out.push(`Those lines are unchanged but have moved: now at ${where}.`);
+  else if (a.state === 'outdated') {
+    out.push(`Those lines have changed since the comment was written. The code there now (${where}):`);
+    out.push(fence(a.current_text ?? ''));
+  } else if (a.path !== t.path) out.push(`The file has been renamed to ${a.path}.`);
   if (t.anchor_text) {
     out.push(`Lines the comment is attached to, as they were when it was written:`);
     out.push(fence(t.anchor_text));
   }
   out.push('Conversation:');
   for (const c of t.comments) {
-    out.push(`- ${who(c.author)}${c.author === 'user' && c.in_this_review ? ' (this review)' : ''}:`);
+    const notes = [
+      c.author === 'user' && c.in_this_review ? 'this review' : null,
+      c.suggestion ? (c.applied ? 'suggestion already applied' : `suggestion: apply with apply_suggestion comment_id=${c.id}`) : null,
+    ].filter(Boolean);
+    out.push(`- ${who(c.author)}, comment ${c.id}${notes.length ? ` (${notes.join('; ')})` : ''}:`);
     out.push(indent(c.body));
   }
   return out.join('\n');
@@ -57,7 +68,9 @@ export function formatReview(r: AgentReview): string {
     '---',
     'Next:',
     '1. For each thread that needs your reply, read the current code, make any change the comment asks for, and answer with the reply tool. Say briefly what you changed and where. If you disagree or the user must choose, say so and set needs_decision.',
-    ...(suggestions ? ['   A ```suggestion block is replacement text the user proposes for the attached lines.'] : []),
+    ...(suggestions
+      ? ['   A ```suggestion block is replacement text the user proposes for the attached lines. Apply it with apply_suggestion if you agree; it refuses if the lines have changed, and then you edit by hand.']
+      : []),
     `2. Then call complete_review with review_id ${r.id} and a one- or two-sentence summary.`,
     'Do not resolve threads: only the user resolves them.',
   );
@@ -79,7 +92,10 @@ export function formatUiThread(t: ThreadView): string {
   return formatThread({
     id: t.id, path: t.path, side: t.side, start_line: t.start_line, end_line: t.end_line, anchor_text: t.anchor_text,
     status: t.status, needs_decision: t.needs_decision, awaiting_reply: t.awaiting === 'claude',
-    file_changed_since_comment: false, file_exists: true,
-    comments: published.map((c) => ({ id: c.id, author: c.author, body: c.body, created_at: c.created_at, in_this_review: false })),
+    anchor: t.anchor ?? { state: 'current', path: t.path, start_line: t.start_line, end_line: t.end_line },
+    comments: published.map((c) => ({
+      id: c.id, author: c.author, body: c.body, created_at: c.created_at, in_this_review: false,
+      suggestion: hasSuggestion(c.body), applied: c.applied_at !== null,
+    })),
   });
 }

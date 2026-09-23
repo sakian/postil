@@ -49,7 +49,10 @@ Other commands: `postil status`, `postil open`, `postil stop`, and `postil help`
   line-range comments, reviews, conversations, viewed files, and outdated comments kept in view.
 - **Phase 3 — Claude Code plugin: done.** Submitted reviews wake a listening session, which
   handles them with no prompt. Verified with real Claude sessions, including an idle one.
-- **Phase 4 — scope and history: next.**
+- **Phase 4 — scope and history: done.** Comments follow their code as it moves, outdated ones
+  show what changed, suggestions apply with one click (or by Claude), files updated since your
+  last review are marked, and any range of commits can be reviewed.
+- **Phase 5 — polish: next.**
 
 ## Development
 

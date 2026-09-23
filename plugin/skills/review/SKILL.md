@@ -44,8 +44,9 @@ If the user passed `stop`, see "Stop listening" instead.
 1. Call `get_review` with the review id. Read every thread before changing anything, since comments often relate.
 2. For each thread marked NEEDS YOUR REPLY:
    - A change request: make the change. Read the current file first; the code may have moved since the comment.
-   - A ```suggestion block: it is the user's proposed replacement for the attached lines. Apply it unless it is
-     wrong, and say so if it is.
+   - A ```suggestion block: it is the user's proposed replacement for the attached lines. Apply it with
+     `apply_suggestion` unless it is wrong, and say so if it is. If it refuses because the lines have changed,
+     make the equivalent edit yourself.
    - A question: answer it, changing code only if the answer calls for it.
    - If you disagree, or the user must choose between options, say so and set `needs_decision`.
 3. Run the project's tests or checks if your changes could affect them.

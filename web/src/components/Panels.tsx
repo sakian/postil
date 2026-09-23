@@ -1,18 +1,19 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { ThreadView } from '../../../src/core/api-types.ts';
-import { lineLabel, placement, relativeTime, snippet, threadFile } from '../format.ts';
+import { isOutdated, lineLabel, placement, relativeTime, snippet, threadFile, threadPath } from '../format.ts';
 import { useStore } from '../store.ts';
 import { Icon } from './icons.tsx';
 import { Markdown } from './Markdown.tsx';
 import { StatusChips, ThreadWidget } from './Thread.tsx';
 
-type Filter = 'yours' | 'claude' | 'pending' | 'open' | 'resolved' | 'all';
+type Filter = 'yours' | 'claude' | 'pending' | 'open' | 'outdated' | 'resolved' | 'all';
 
 const FILTERS: Array<[Filter, string, (t: ThreadView) => boolean]> = [
   ['yours', 'Your turn', (t) => t.status === 'open' && t.awaiting === 'user'],
   ['claude', 'Waiting for Claude', (t) => t.status === 'open' && t.awaiting === 'claude'],
   ['pending', 'Pending', (t) => t.comments.some((c) => c.draft)],
   ['open', 'Open', (t) => t.status === 'open'],
+  ['outdated', 'Outdated', (t) => t.status === 'open' && isOutdated(t)],
   ['resolved', 'Resolved', (t) => t.status === 'resolved'],
   ['all', 'All', () => true],
 ];
@@ -45,12 +46,11 @@ function ThreadsPanel() {
           return (
             <div key={t.id} className="panel-item">
               {isOpen ? (
-                <ThreadWidget thread={t} showLocation outdated={where === 'outdated'} />
+                <ThreadWidget thread={t} showLocation />
               ) : (
                 <button className="panel-item-summary" onClick={() => setExpanded(t.id)}>
                   <div className="panel-item-head">
-                    <code>{t.path}:{lineLabel(t)}</code>
-                    {where === 'outdated' && <span className="chip chip-outdated">Outdated</span>}
+                    <code>{threadPath(t)}:{lineLabel(t)}</code>
                     {where === 'elsewhere' && <span className="chip" title="This file is not part of the current view">Not in view</span>}
                     <StatusChips thread={t} />
                   </div>

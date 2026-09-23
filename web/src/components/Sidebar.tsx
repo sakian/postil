@@ -16,6 +16,8 @@ export function Sidebar() {
   const allDirs = useMemo(() => dirPaths(tree), [tree]);
   const collapsed = useMemo(() => new Set(collapsedDirs), [collapsedDirs]);
   const rows = useMemo(() => flatten(tree, collapsed), [tree, collapsed]);
+  const updated = useStore((s) => (s.scope.kind === 'since_review' ? null : s.resolved?.since_review ?? null));
+  const updatedPaths = useMemo(() => new Set(updated?.changed ?? []), [updated]);
   const openByPath = useMemo(() => {
     const m = new Map<string, number>();
     for (const t of threads) if (t.status === 'open') m.set(t.path, (m.get(t.path) ?? 0) + 1);
@@ -65,6 +67,7 @@ export function Sidebar() {
               onClick={() => document.getElementById(fileAnchor(f.path))?.scrollIntoView({ block: 'start' })} title={f.path}>
               <StatusBadge file={f} />
               <span className="tree-name">{node.name}</span>
+              {updatedPaths.has(f.path) && <span className="tree-updated" title={`Changed since you submitted review #${updated?.review_id}`} />}
               {open > 0 && <span className="tree-badge" title={`${open} open conversation(s)`}>{open}</span>}
               {isViewed && <Icon name="check" size={14} title="Viewed" />}
             </button>

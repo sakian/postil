@@ -1,5 +1,5 @@
 import type {
-  BaseInfo, CommitsInfo, FileDiff, FileMarkRow, Health, NewThreadInput, ResolvedDiff, ReviewView, Scope, ThreadView,
+  AppliedSuggestion, BaseInfo, CommitsInfo, FileDiff, FileMarkRow, Health, NewThreadInput, ResolvedDiff, ReviewView, Scope, ThreadView,
 } from '../../src/core/api-types.ts';
 
 const TOKEN_KEY = 'postil.token';
@@ -74,7 +74,10 @@ export const api = {
   lines: (oid: string, start: number, end: number) =>
     call<{ lines: string[]; total: number; end: number }>('GET', `/api/blobs/${oid}/lines?${q({ start, end })}`),
 
-  threads: () => call<{ threads: ThreadView[] }>('GET', '/api/threads'),
+  /** Threads, anchored to the given diff when its trees are passed. */
+  threads: (trees?: { from: string; to: string }) =>
+    call<{ threads: ThreadView[] }>('GET', `/api/threads${trees ? `?${q({ from: trees.from, to: trees.to })}` : ''}`),
+  applySuggestion: (commentId: number) => call<AppliedSuggestion>('POST', `/api/comments/${commentId}/apply`),
   createThread: (input: NewThreadInput) => call<ThreadView>('POST', '/api/threads', input),
   reply: (threadId: number, body: string) => call<ThreadView>('POST', `/api/threads/${threadId}/replies`, { body }),
   resolveThread: (id: number) => call<ThreadView>('POST', `/api/threads/${id}/resolve`),

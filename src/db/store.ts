@@ -287,6 +287,10 @@ export class Store {
     this.run('UPDATE comment SET body = :body, updated_at = :now WHERE id = :id', { id, body, now: nowIso() });
   }
 
+  markApplied(id: number): void {
+    this.run('UPDATE comment SET applied_at = :now WHERE id = :id', { id, now: nowIso() });
+  }
+
   deleteComment(id: number): void {
     this.run('DELETE FROM comment WHERE id = :id', { id });
   }

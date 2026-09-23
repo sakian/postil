@@ -50,6 +50,7 @@ export interface CommentRow {
   draft: boolean;
   created_at: string;
   updated_at: string;
+  applied_at: string | null;
 }
 
 export interface FileMarkRow {

@@ -33,23 +33,38 @@ export function markKey(path: string, blob: string): string {
   return `${path}\u0000${blob}`;
 }
 
-export function lineLabel(t: Pick<ThreadView, 'start_line' | 'end_line'>): string {
-  if (t.start_line === null) return 'file';
-  return t.start_line === t.end_line ? `L${t.start_line}` : `L${t.start_line}–${t.end_line}`;
+/** The lines a thread covers now: its anchor in the current diff, else where it was written. */
+export function currentLines(t: Pick<ThreadView, 'start_line' | 'end_line' | 'anchor'>): { start: number | null; end: number | null } {
+  if (t.anchor && t.anchor.state !== 'gone') return { start: t.anchor.start_line, end: t.anchor.end_line };
+  return { start: t.start_line, end: t.end_line };
 }
 
-/** Where a thread sits relative to the file as shown in the current diff. */
-export type Placement = 'inline' | 'file' | 'outdated' | 'elsewhere';
+export function lineLabel(t: Pick<ThreadView, 'start_line' | 'end_line' | 'anchor'>): string {
+  const { start, end } = currentLines(t);
+  if (start === null) return 'file';
+  return start === end ? `L${start}` : `L${start}–${end}`;
+}
+
+/** Where a thread sits relative to the diff on screen. */
+export type Placement = 'inline' | 'file' | 'gone' | 'elsewhere';
+
+export function threadPath(t: ThreadView): string {
+  return t.anchor?.path ?? t.path;
+}
 
 export function threadFile(t: ThreadView, files: readonly FileChange[]): FileChange | undefined {
-  return files.find((f) => (t.side === 'new' ? f.new_path === t.path : f.old_path === t.path) || f.path === t.path);
+  const path = threadPath(t);
+  return files.find((f) => (t.side === 'new' ? f.new_path === path : f.old_path === path)) ?? files.find((f) => f.path === t.path);
 }
 
 export function placement(t: ThreadView, file: FileChange | undefined): Placement {
   if (!file) return 'elsewhere';
-  const blob = t.side === 'new' ? file.new_blob : file.old_blob;
-  if (blob !== t.blob) return 'outdated';
-  return t.start_line === null ? 'file' : 'inline';
+  if (t.anchor?.state === 'gone') return 'gone';
+  return currentLines(t).start === null ? 'file' : 'inline';
+}
+
+export function isOutdated(t: ThreadView): boolean {
+  return t.anchor?.state === 'outdated' || t.anchor?.state === 'gone';
 }
 
 /** A one-line plain-text preview of a Markdown comment. */

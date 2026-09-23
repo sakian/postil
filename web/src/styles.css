@@ -384,3 +384,33 @@ code, pre { font-family: var(--mono); }
   .sidebar { width: 230px; }
   .side-panel { width: 360px; }
 }
+
+/* ------------------------------------------------------------------ phase 4 */
+.chip-updated { background: #ddf4ff; color: #0969da; }
+.tree-updated { width: 7px; height: 7px; border-radius: 50%; background: var(--accent); flex: none; }
+.suggestion-title { display: flex; align-items: center; gap: 8px; }
+.change-toggle { margin: 6px 12px 0; }
+.what-changed { border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; margin-top: 6px; }
+.what-changed-title { font-size: 12px; font-weight: 600; padding: 4px 10px; background: var(--bg-subtle); border-bottom: 1px solid var(--border-muted); }
+.what-changed .marker { width: 20px; }
+@media (prefers-color-scheme: dark) { .chip-updated { background: rgba(56, 139, 253, 0.2); color: #58a6ff; } }
+
+.scope-wrap { position: relative; }
+.popover {
+  position: absolute; top: calc(100% + 6px); left: 0; z-index: 30; width: 560px; max-width: 90vw; background: var(--bg);
+  border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow); display: flex; flex-direction: column;
+}
+.popover-head { display: flex; flex-direction: column; gap: 2px; padding: 10px 12px; border-bottom: 1px solid var(--border-muted); font-size: 13px; }
+.popover-actions { display: flex; gap: 8px; align-items: center; justify-content: flex-end; padding: 8px 12px; border-top: 1px solid var(--border-muted); }
+.popover-actions .muted { margin-right: auto; font-size: 12px; }
+.commit-list { max-height: 360px; overflow: auto; }
+.commit-row {
+  display: flex; align-items: baseline; gap: 8px; width: 100%; padding: 6px 12px; border: none; background: none;
+  text-align: left; cursor: pointer; border-bottom: 1px solid var(--border-muted); user-select: none;
+}
+.commit-row:hover { background: var(--bg-inset); }
+.commit-row.selected { background: var(--hunk-bg); }
+.commit-check { width: 14px; color: var(--accent); font-weight: 700; flex: none; }
+.commit-sha { font-size: 12px; color: var(--accent); flex: none; }
+.commit-subject { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; }
+.commit-meta { font-size: 12px; flex: none; }
