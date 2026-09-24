@@ -1,0 +1,7 @@
+{
+  "name": "postil",
+  "version": "0.1.0",
+  "description": "Review Claude's changes in a local GitHub-style UI. Submitted reviews wake this session, which addresses each comment, replies, and completes the review.",
+  "author": { "name": "Mark", "email": "mark@opifex.ca" },
+  "keywords": ["code-review", "diff", "local"]
+}
