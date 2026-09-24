@@ -1,5 +1,6 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import type { Scope } from '../../../src/core/api-types.ts';
+import { api } from '../api.ts';
 import { basename, shortSha } from '../format.ts';
 import { useStore } from '../store.ts';
 import { CommitPicker } from './CommitPicker.tsx';
@@ -56,6 +57,36 @@ function ScopePicker() {
   );
 }
 
+const DEFAULT_BASE = ' default';
+const FIXED_BASE = ' fixed';
+
+/** The branch "all changes" is measured from: a fallback for when the default guessed wrong. */
+function BasePicker() {
+  const base = useStore((s) => s.base);
+  const { setBaseBranch } = useStore.getState();
+  const [branches, setBranches] = useState<string[]>([]);
+  const load = () => void api.branches().then((b) => setBranches(b.branches), () => {});
+  useEffect(load, []);
+  if (!base) return null;
+
+  const current = base.config.mode === 'merge-base' ? base.config.target : FIXED_BASE;
+  const names = current !== FIXED_BASE && !branches.includes(current) ? [current, ...branches] : branches;
+  const onChange = (value: string) => {
+    if (value !== FIXED_BASE) void setBaseBranch(value === DEFAULT_BASE ? null : value);
+  };
+
+  return (
+    <label className="base-picker" title={`Measured from the ${base.label}${base.warning ? ` (${base.warning})` : ''}`}>
+      <span className="muted">compared to</span>
+      <select value={current} onChange={(e) => onChange(e.target.value)} onFocus={load}>
+        <option value={DEFAULT_BASE}>default</option>
+        {current === FIXED_BASE && <option value={FIXED_BASE}>{base.commit ? `commit ${shortSha(base.commit)}` : 'nothing (every file)'}</option>}
+        {names.map((b) => <option key={b} value={b}>{b}</option>)}
+      </select>
+    </label>
+  );
+}
+
 function ClaudeStatus() {
   const reviews = useStore((s) => s.reviews);
   const listening = useStore((s) => s.listening);
@@ -84,6 +115,7 @@ function ClaudeStatus() {
 
 export function Header() {
   const health = useStore((s) => s.health);
+  const scopeKind = useStore((s) => s.scope.kind);
   const view = useStore((s) => s.view);
   const connected = useStore((s) => s.connected);
   const draft = useStore((s) => s.draft);
@@ -98,6 +130,7 @@ export function Header() {
       <span className="brand">postil</span>
       <span className="repo" title={health?.root}>{health ? basename(health.root) : ''}</span>
       <ScopePicker />
+      {scopeKind === 'all' && <BasePicker />}
       <ClaudeStatus />
       <span className="spacer" />
       <div className="segmented" role="group" aria-label="Diff layout (press S to toggle)">

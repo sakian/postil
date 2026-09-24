@@ -327,6 +327,26 @@ describe('postil UI', { timeout: 120_000 }, () => {
     await page.locator('.scope-picker select').selectOption('all');
   });
 
+  it('measures all changes from a branch chosen in the header', async () => {
+    const original = await agent<{ commit: string }>('GET', '/api/base');
+    fx.git('branch', 'develop', 'HEAD~1');
+    const picker = page.locator('.base-picker select');
+    await picker.focus(); // reloads the branch list
+    await until(async () => (await picker.locator('option', { hasText: 'develop' }).count()) === 1, 'develop in the list');
+    await picker.selectOption('develop');
+    // Measured from develop, the README commit is no longer part of "all changes".
+    await until(async () => (await page.locator('section.file').count()) === 5, 'five files since develop');
+    assert.equal(await page.locator(fileId('README.md')).count(), 0);
+    assert.equal(await picker.inputValue(), 'develop');
+    assert.equal(await page.locator('.banner').count(), 0, 'a change made here does not ask for a refresh');
+    await shot('13b-base-picker');
+
+    await agent('PUT', '/api/base', { rev: original.commit });
+    await until(async () => (await page.locator('.banner').count()) === 1, 'a change made elsewhere offers a refresh');
+    await page.locator('.banner button').click();
+    await until(async () => (await page.locator('section.file').count()) === 6, 'back to six files');
+  });
+
   it('marks sections done, folds them, and keeps them done through edits elsewhere', async () => {
     await page.locator('body').click({ position: { x: 5, y: 5 } });
     if (await page.locator('table.diff-split').count()) await page.keyboard.press('s'); // back to unified

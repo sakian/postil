@@ -82,6 +82,8 @@ interface State {
 interface Actions {
   boot(): Promise<void>;
   setScope(scope: Scope): Promise<void>;
+  /** Measure "all changes" from a branch, or null for the default base. */
+  setBaseBranch(branch: string | null): Promise<void>;
   refresh(): Promise<void>;
   refreshThreads(): Promise<void>;
   refreshReviews(): Promise<void>;
@@ -244,6 +246,15 @@ export const useStore = create<Store>()((set, get) => {
     async setScope(scope) {
       set({ scope, selection: null, composer: null });
       persist(PERSISTED.scope, scope);
+      await get().refresh();
+    },
+
+    async setBaseBranch(branch) {
+      try {
+        set({ base: await api.setBaseBranch(branch) });
+      } catch (e) {
+        return fail(e);
+      }
       await get().refresh();
     },
 
@@ -662,8 +673,13 @@ export const useStore = create<Store>()((set, get) => {
           void s.refreshSections();
           break;
         case 'worktree.changed':
+          if (s.resolved?.to.live) set({ stale: true });
+          break;
         case 'base.changed':
-          if (s.resolved?.to.live || e.type === 'base.changed') set({ stale: true });
+          // Changed here, the diff is already being refreshed; changed elsewhere (the CLI), offer to.
+          void api.base().then((base) => {
+            if (JSON.stringify(base.config) !== JSON.stringify(get().base?.config)) set({ stale: true });
+          }, () => set({ stale: true }));
           break;
       }
     },

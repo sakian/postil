@@ -16,7 +16,7 @@ export function relativeTime(iso: string | null | undefined, now = Date.now()): 
 }
 
 export function basename(path: string): string {
-  return path.split('/').filter(Boolean).at(-1) ?? path;
+  return path.split(/[\\/]/).filter(Boolean).at(-1) ?? path; // the repository root is C:\... on Windows
 }
 
 /** Content-addressed key for a file's diff: the same pair of blobs always gives the same diff. */

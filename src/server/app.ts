@@ -166,6 +166,7 @@ export function createApp(postil: Postil, opts: AppOptions): Hono {
   });
   app.post('/api/base/reset', async (c) => c.json(await postil.resetBase()));
   app.get('/api/commits', async (c) => c.json(await postil.commits()));
+  app.get('/api/branches', async (c) => c.json(await postil.branches()));
 
   // -------------------------------------------------------------- diffs
   app.post('/api/diff/resolve', async (c) => {

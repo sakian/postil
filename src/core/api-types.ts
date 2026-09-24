@@ -25,6 +25,12 @@ export interface BaseInfo {
   warning?: string;
 }
 
+/** Branches the base can follow: local and remote-tracking, newest first, without the current branch. */
+export interface BranchesInfo {
+  branches: string[];
+  current: string | null;
+}
+
 export type Scope =
   | { kind: 'all' }
   | { kind: 'uncommitted' }

@@ -133,10 +133,12 @@ code, pre { font-family: var(--mono); }
 }
 .brand { font-weight: 700; letter-spacing: 0.02em; color: var(--claude); }
 .repo { font-weight: 600; max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.scope-picker select {
+.scope-picker select, .base-picker select {
   font: inherit; padding: 3px 8px; border: 1px solid var(--border); border-radius: var(--radius);
   background: var(--bg); color: var(--fg);
 }
+.base-picker { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; }
+.base-picker select { max-width: 180px; }
 .claude-status { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; padding: 2px 10px; border-radius: 12px; }
 .claude-status.working { background: #fbefe9; color: #a14b2e; }
 .claude-status.waiting { background: #fff8c5; color: #7d4e00; }

@@ -16,7 +16,7 @@ export { agentHint } from './hints.ts';
 import { HttpError } from './util.ts';
 
 import type {
-  AgentReview, AgentThread, AppliedSuggestion, BaseConfig, BaseInfo, CommentView, CommitsInfo, Endpoint, FileDiff, HookStatus, ListenResult,
+  AgentReview, AgentThread, AppliedSuggestion, BaseConfig, BaseInfo, BranchesInfo, CommentView, CommitsInfo, Endpoint, FileDiff, HookStatus, ListenResult,
   NewThreadInput, ResolvedScope, ReviewView, Scope, ThreadView,
 } from './api-types.ts';
 
@@ -157,6 +157,11 @@ export class Postil {
     await this.saveBase({ mode: 'commit', commit });
     this.bus.emit({ type: 'base.changed' });
     return this.base();
+  }
+
+  async branches(): Promise<BranchesInfo> {
+    const [branches, current] = await Promise.all([this.repo.branches(), this.repo.currentBranch()]);
+    return { branches: branches.filter((b) => b !== current), current };
   }
 
   /** Measure "all changes" from the merge base with a branch, following it as it moves, as a pull request does. */

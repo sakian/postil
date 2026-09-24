@@ -182,6 +182,17 @@ export class Repo {
     return null;
   }
 
+  /** Local and remote-tracking branches, most recently committed first, without symbolic refs like origin/HEAD. */
+  async branches(limit = 200): Promise<string[]> {
+    const text = await gitText(this.root, [
+      'for-each-ref', '--sort=-committerdate', `--count=${limit}`, '--format=%(refname:short)%09%(symref)', 'refs/heads', 'refs/remotes',
+    ]);
+    return text.split('\n').flatMap((line) => {
+      const [name, symref] = line.split('\t');
+      return name && !symref ? [name] : [];
+    });
+  }
+
   /**
    * The branch that the current branch's open pull request targets, asked of the GitHub CLI.
    * Null when gh is missing, signed out, offline or slow, or there is no pull request.

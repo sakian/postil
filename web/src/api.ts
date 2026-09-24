@@ -1,5 +1,5 @@
 import type {
-  AnchoredSectionMark, AppliedSuggestion, SectionMarkRow, Side, BaseInfo, CommitsInfo, FileDiff, FileMarkRow, Health, NewThreadInput, ResolvedDiff, ReviewView, Scope, ThreadView,
+  AnchoredSectionMark, AppliedSuggestion, SectionMarkRow, Side, BaseInfo, BranchesInfo, CommitsInfo, FileDiff, FileMarkRow, Health, NewThreadInput, ResolvedDiff, ReviewView, Scope, ThreadView,
 } from '../../src/core/api-types.ts';
 
 const TOKEN_KEY = 'postil.token';
@@ -77,6 +77,10 @@ export const api = {
   health: () => call<Health>('GET', '/api/health'),
   base: () => call<BaseInfo>('GET', '/api/base'),
   commits: () => call<CommitsInfo>('GET', '/api/commits'),
+  branches: () => call<BranchesInfo>('GET', '/api/branches'),
+  /** Follow the merge base with a branch, or null to go back to the default base. */
+  setBaseBranch: (branch: string | null) =>
+    branch === null ? call<BaseInfo>('POST', '/api/base/reset') : call<BaseInfo>('PUT', '/api/base', { branch }),
   resolve: (scope: Scope) => call<ResolvedDiff>('POST', '/api/diff/resolve', { scope }),
   fileDiff: (oldBlob: string | null, newBlob: string | null, opts: { force?: boolean; signal?: AbortSignal } = {}) =>
     call<FileDiff>('GET', `/api/diff/file?${q({ old: oldBlob, new: newBlob, force: opts.force ? '1' : undefined })}`, undefined, opts.signal),
