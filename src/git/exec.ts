@@ -90,7 +90,30 @@ export async function git(cwd: string, args: readonly string[], opts: GitRunOpti
   }
 }
 
+/** git processes still running, so a shutdown can wait for them. */
+const inFlight = new Set<Promise<unknown>>();
+
+/**
+ * Resolves once no git process started here is still running, or after `timeoutMs`. On Windows a
+ * directory cannot be deleted while a process has it as its working directory.
+ */
+export async function gitIdle(timeoutMs = 5000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (inFlight.size > 0 && Date.now() < deadline) {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    await Promise.race([Promise.allSettled([...inFlight]), new Promise((r) => { timer = setTimeout(r, deadline - Date.now()); })]);
+    clearTimeout(timer);
+  }
+}
+
 function runGit(cwd: string, args: readonly string[], opts: GitRunOptions): Promise<Buffer> {
+  const run = spawnGit(cwd, args, opts);
+  inFlight.add(run);
+  void run.finally(() => inFlight.delete(run)).catch(() => undefined);
+  return run;
+}
+
+function spawnGit(cwd: string, args: readonly string[], opts: GitRunOptions): Promise<Buffer> {
   const maxBytes = opts.maxBytes ?? DEFAULT_MAX_BYTES;
   return new Promise((resolve, reject) => {
     const child = spawn('git', args, {

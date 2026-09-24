@@ -54,7 +54,8 @@ export function makeFixture(opts: { initialBranch?: string } = {}): Fixture {
       return run('rev-parse', 'HEAD').trim();
     },
     cleanup() {
-      rmSync(dir, { recursive: true, force: true });
+      // Windows can briefly hold a file a just-exited git process had open; retry rather than fail.
+      rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
     },
   };
   return fixture;

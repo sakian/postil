@@ -9,6 +9,7 @@ import { EventBus } from '../core/events.ts';
 import { Postil } from '../core/postil.ts';
 import { nowIso } from '../core/util.ts';
 import { VERSION } from '../core/version.ts';
+import { gitIdle } from '../git/exec.ts';
 import { createApp } from './app.ts';
 import { attachEvents, type EventsHandle } from './ws.ts';
 
@@ -114,6 +115,7 @@ export async function startServer(opts: ServeOptions): Promise<RunningServer> {
         await new Promise<void>((resolve) => server.close(() => resolve()));
         await removeServerInfo(stateDir);
         await lockRelease();
+        await gitIdle(); // a poll or request may still have git running in the repository
         postil.close();
       },
     };
