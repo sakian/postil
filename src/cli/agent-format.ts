@@ -71,7 +71,10 @@ export function formatReview(r: AgentReview): string {
     ...(suggestions
       ? ['   A ```suggestion block is replacement text the user proposes for the attached lines. Apply it with apply_suggestion if you agree; it refuses if the lines have changed, and then you edit by hand.']
       : []),
-    `2. Then call complete_review with review_id ${r.id} and a one- or two-sentence summary.`,
+    ...(r.commit
+      ? ['2. Run the checks, then commit the changes you made for this review as atomic commits (one logical change each) with clear messages, following the repository\'s commit conventions. Do not push: the user pushes at the end.']
+      : []),
+    `${r.commit ? 3 : 2}. Then call complete_review with review_id ${r.id} and a one- or two-sentence summary.`,
     'Do not resolve threads: only the user resolves them.',
   );
   return out.join('\n');

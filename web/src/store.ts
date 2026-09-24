@@ -1,12 +1,13 @@
 import { create } from 'zustand';
 import type {
-  AnchoredSectionMark, BaseInfo, CommitsInfo, FileChange, Hunk, FileDiff, Health, ResolvedDiff, ReviewView, Scope, Side, ThreadView,
+  AnchoredSectionMark, BaseInfo, CommitsInfo, FileChange, FinishOptions, Preferences, Hunk, FileDiff, Health, ResolvedDiff, ReviewView, Scope, Side, ThreadView,
 } from '../../src/core/api-types.ts';
 import { api, ApiError } from './api.ts';
 import { diffKey, markKey, sidePath, viewedBlob } from './format.ts';
 import { highlight, MAX_HIGHLIGHT_LINES, type Token } from './highlight/index.tsx';
 import { withExpanded } from './lib/expanded.ts';
 import { add, removeOverlapping, type Range } from './lib/ranges.ts';
+import { notePin } from './lib/pin.ts';
 import { hunkDone, hunkRanges, marksOverlapping, validMarks } from './lib/sections.ts';
 
 export type ViewMode = 'unified' | 'split';
@@ -20,6 +21,22 @@ export interface Target {
   side: Side;
   start: number;
   end: number;
+}
+
+/** A comment's target: some lines of a file, or the whole file (no lines). */
+export type ThreadTarget = Target | (Omit<Target, 'start' | 'end'> & { start: null; end: null });
+
+/** Where a new comment's unsent text lives in `composerText`. */
+export function newThreadKey(t: ThreadTarget): string {
+  return t.start === null ? `new:${t.path}:file` : `new:${t.path}:${t.side}:${t.start}-${t.end}`;
+}
+
+export function rangeLabel(t: Pick<Target, 'start' | 'end'>): string {
+  return t.start === t.end ? `L${t.start}` : `L${t.start}–${t.end}`;
+}
+
+function sameTarget(a: Target, b: Target): boolean {
+  return a.path === b.path && a.side === b.side && a.start === b.start && a.end === b.end;
 }
 
 export type Loadable<T> = { state: 'loading' } | { state: 'ready'; value: T } | { state: 'error'; message: string };
@@ -70,13 +87,23 @@ interface State {
   fileFold: Record<string, boolean>;
   selection: Target | null;
   composer: Target | null;
+  /** The file (by path) whose whole-file comment composer is open. */
+  fileComposer: string | null;
   /** Unsent comment text by composer, kept here so it survives its file scrolling out of the DOM. */
   composerText: Record<string, string>;
   panel: Panel;
   focusThread: number | null;
-  /** A request to scroll a file into view; `n` makes repeated requests for one file distinct. */
-  revealPath: { path: string; n: number } | null;
+  /**
+   * A request to scroll a file into view, or an element in it (`anchor`, an element id) such as
+   * a conversation; `n` makes repeated requests distinct.
+   */
+  revealPath: { path: string; n: number; anchor?: string } | null;
   toasts: Toast[];
+  /** A review Claude just finished, offered as "show what changed" until dismissed. */
+  completedReview: number | null;
+  /** The user ended the review session: everything resolved and archived. */
+  sessionFinished: boolean;
+  preferences: Preferences;
 }
 
 interface Actions {
@@ -108,22 +135,27 @@ interface Actions {
   toggleDir(path: string): void;
   setCollapsedDirs(paths: string[]): void;
   setFold(path: string, folded: boolean): void;
-  setViewed(file: FileChange, viewed: boolean): Promise<void>;
+  /** Viewed means every section done: viewing marks them all, unviewing clears them unless `keepSections`. */
+  setViewed(file: FileChange, viewed: boolean, opts?: { keepSections?: boolean }): Promise<void>;
 
   select(target: Target | null): void;
   setComposerText(key: string, text: string | null): void;
   openComposer(target: Target | null): void;
-  createThread(target: Target, body: string): Promise<void>;
+  openFileComposer(path: string | null): void;
+  createThread(target: ThreadTarget, body: string): Promise<void>;
   reply(threadId: number, body: string): Promise<void>;
   editComment(commentId: number, body: string): Promise<void>;
   deleteComment(commentId: number): Promise<void>;
   setResolved(threadId: number, resolved: boolean): Promise<void>;
   setDraftBody(body: string): Promise<void>;
   submit(body: string): Promise<void>;
+  finishSession(opts: FinishOptions): Promise<void>;
+  setPreferences(change: Partial<Preferences>): Promise<void>;
+  dismissCompleted(): void;
 
   setPanel(panel: Panel): void;
   focus(threadId: number | null): void;
-  revealFile(path: string): void;
+  revealFile(path: string, anchor?: string): void;
   toast(text: string, action?: Toast['action']): void;
   dismiss(id: number): void;
   handleEvent(e: { type: string; [k: string]: unknown }): void;
@@ -159,6 +191,15 @@ const inflight = new Map<string, Promise<unknown>>();
  */
 const diffRequests = new Map<string, AbortController>();
 
+const queues = new Map<string, Promise<unknown>>();
+/** Run `fn` after everything queued before it under the same key. */
+function queued<T>(key: string, fn: () => Promise<T>): Promise<T> {
+  const next = (queues.get(key) ?? Promise.resolve()).catch(() => undefined).then(fn);
+  queues.set(key, next);
+  void next.finally(() => { if (queues.get(key) === next) queues.delete(key); }).catch(() => undefined);
+  return next;
+}
+
 /** Run `fn` once per key at a time; concurrent callers share its promise. */
 function once<T>(key: string, fn: () => Promise<T>): Promise<T> {
   const running = inflight.get(key) as Promise<T> | undefined;
@@ -181,6 +222,26 @@ export const useStore = create<Store>()((set, get) => {
   const fail = (e: unknown) => {
     if (e instanceof ApiError && e.status === 401) set({ authFailed: true });
     else get().toast(errorText(e));
+  };
+
+  /** Mark every section of a file done, or clear them all, so "viewed" and its sections agree. */
+  const syncSections = async (file: FileChange, done: boolean) => {
+    const diff = get().diffs[diffKey(file)];
+    const marks = validMarks(get().sections, file);
+    if (done) {
+      if (diff?.state !== 'ready') return;
+      for (const hunk of diff.value.hunks) {
+        if (hunkDone(hunk, marks)) continue;
+        for (const r of hunkRanges(hunk)) {
+          await api.addSectionMark({
+            path: sidePath(file, r.side), from_blob: file.old_blob, to_blob: file.new_blob, side: r.side, start_line: r.start, end_line: r.end,
+          });
+        }
+      }
+    } else {
+      for (const m of marks) await api.removeSectionMark(m.id);
+    }
+    await get().refreshSections();
   };
 
   return {
@@ -212,11 +273,15 @@ export const useStore = create<Store>()((set, get) => {
     fileFold: {},
     selection: null,
     composer: null,
+    fileComposer: null,
     composerText: {},
     panel: null,
     focusThread: null,
     revealPath: null,
     toasts: [],
+    completedReview: null,
+    sessionFinished: false,
+    preferences: { commit_each_review: false },
 
     async boot() {
       try {
@@ -236,6 +301,7 @@ export const useStore = create<Store>()((set, get) => {
           collapsedDirs: tree.value ?? [],
         });
         await Promise.all([get().refresh(), get().refreshReviews(), get().refreshMarks()]);
+        set({ preferences: await api.preferences() });
       } catch (e) {
         fail(e);
       } finally {
@@ -331,6 +397,8 @@ export const useStore = create<Store>()((set, get) => {
           }
         } else {
           for (const m of marksOverlapping(hunk, validMarks(get().sections, file))) await api.removeSectionMark(m.id);
+          const blob = viewedBlob(file);
+          if (blob && get().viewed.has(markKey(file.path, blob))) await get().setViewed(file, false, { keepSections: true });
         }
         await get().refreshSections();
         // Finishing the last section finishes the file.
@@ -486,12 +554,15 @@ export const useStore = create<Store>()((set, get) => {
     },
 
     setFold(path, folded) {
+      notePin(path);
       set((s) => ({ fileFold: { ...s.fileFold, [path]: folded } }));
     },
 
-    async setViewed(file, viewed) {
+    async setViewed(file, viewed, opts = {}) {
       const blob = viewedBlob(file);
       if (!blob) return;
+      notePin(file.path);
+      const was = get().viewed.has(markKey(file.path, blob));
       const key = markKey(file.path, blob);
       set((s) => {
         const next = new Set(s.viewed);
@@ -501,7 +572,11 @@ export const useStore = create<Store>()((set, get) => {
         return { viewed: next, fileFold };
       });
       try {
-        await api.setFileMark(file.path, blob, viewed);
+        // One file's marks change in order: unviewing right after viewing must not race it.
+        await queued(file.path, async () => {
+          await api.setFileMark(file.path, blob, viewed);
+          if (viewed !== was && !opts.keepSections) await syncSections(file, viewed);
+        });
       } catch (e) {
         fail(e);
         await get().refreshMarks();
@@ -520,7 +595,21 @@ export const useStore = create<Store>()((set, get) => {
     },
 
     openComposer(target) {
-      set({ composer: target, selection: target });
+      const current = get().composer;
+      if (current && !(target && sameTarget(current, target))) {
+        const text = get().composerText[newThreadKey(current)];
+        if (text?.trim()) {
+          get().toast(`Kept your unsent comment on ${current.path}:${rangeLabel(current)}.`, {
+            label: 'Reopen', run: () => get().openComposer(current),
+          });
+        }
+      }
+      set({ composer: target, selection: target, ...(target && { fileComposer: null }) });
+    },
+
+    openFileComposer(path) {
+      set({ fileComposer: path, ...(path && { composer: null, selection: null }) });
+      if (path) get().setFold(path, false);
     },
 
     async createThread(target, body) {
@@ -531,7 +620,7 @@ export const useStore = create<Store>()((set, get) => {
           from_tree: resolved.from.tree, to_tree: resolved.to.tree,
           path: target.sidePath ?? target.path, side: target.side, start_line: target.start, end_line: target.end, body,
         });
-        set({ composer: null, selection: null });
+        set(target.start === null ? { fileComposer: null } : { composer: null, selection: null });
         await Promise.all([get().refreshThreads(), get().refreshReviews()]);
       } catch (e) {
         fail(e);
@@ -598,6 +687,28 @@ export const useStore = create<Store>()((set, get) => {
       }
     },
 
+    async setPreferences(change) {
+      try {
+        set({ preferences: await api.setPreferences(change) });
+      } catch (e) {
+        fail(e);
+      }
+    },
+
+    async finishSession(opts) {
+      try {
+        await api.finishSession(opts);
+        set({ sessionFinished: true, panel: null, completedReview: null });
+        await Promise.all([get().refreshThreads(), get().refreshReviews()]);
+      } catch (e) {
+        fail(e);
+      }
+    },
+
+    dismissCompleted() {
+      set({ completedReview: null });
+    },
+
     setPanel(panel) {
       set({ panel });
     },
@@ -606,8 +717,8 @@ export const useStore = create<Store>()((set, get) => {
       set({ focusThread: threadId });
     },
 
-    revealFile(path) {
-      set((s) => ({ revealPath: { path, n: (s.revealPath?.n ?? 0) + 1 } }));
+    revealFile(path, anchor) {
+      set((s) => ({ revealPath: { path, n: (s.revealPath?.n ?? 0) + 1, ...(anchor && { anchor }) } }));
     },
 
     toast(text, action) {
@@ -651,13 +762,17 @@ export const useStore = create<Store>()((set, get) => {
         case 'review.completed': {
           void s.refreshReviews();
           void s.refreshThreads();
-          const id = Number(e.review_id);
-          s.toast(`Claude finished review #${id}.`, {
-            label: 'Show changes since review',
-            run: () => void get().setScope({ kind: 'since_review', review_id: id }),
-          });
+          set({ completedReview: Number(e.review_id) });
           break;
         }
+        case 'preferences.changed':
+          void api.preferences().then((preferences) => set({ preferences }), () => undefined);
+          break;
+        case 'session.finished':
+          set({ sessionFinished: true });
+          void s.refreshThreads();
+          void s.refreshReviews();
+          break;
         case 'agents.changed':
           set({ listening: Number(e.listening) || 0 });
           break;

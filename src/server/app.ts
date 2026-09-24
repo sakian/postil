@@ -69,6 +69,8 @@ const schemas = {
   optionalBody: z.object({ body: z.string().optional() }),
   agentReply: z.object({ body: z.string(), needs_decision: z.boolean().optional() }),
   complete: z.object({ summary: z.string() }),
+  preferences: z.object({ commit_each_review: z.boolean().optional() }),
+  finish: z.object({ commit: z.boolean().optional(), push: z.boolean().optional() }),
   fileMark: z.object({ path: z.string().min(1), blob: oid, viewed: z.boolean() }),
   sectionMark: z.object({
     path: z.string().min(1), from_blob: oid.nullable(), to_blob: oid.nullable(), side, start_line: line, end_line: line,
@@ -224,6 +226,9 @@ export function createApp(postil: Postil, opts: AppOptions): Hono {
   // -------------------------------------------------------------- reviews
   app.get('/api/reviews', (c) => c.json({ reviews: postil.reviews() }));
   app.post('/api/archive', async (c) => c.json(await postil.archiveResolved()));
+  app.post('/api/session/finish', async (c) => c.json(await postil.finishSession(await json(c, schemas.finish))));
+  app.get('/api/preferences', (c) => c.json(postil.preferences()));
+  app.put('/api/preferences', async (c) => c.json(postil.setPreferences(await json(c, schemas.preferences))));
   app.get('/api/archive/threads', (c) => c.json({ threads: postil.archivedThreads() }));
   app.post('/api/prune', async (c) => c.json(await postil.prune()));
   app.get('/api/reviews/draft', (c) => c.json({ draft: postil.draft() }));

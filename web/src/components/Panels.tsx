@@ -1,16 +1,16 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { api } from '../api.ts';
 import type { ThreadView } from '../../../src/core/api-types.ts';
-import { isOutdated, lineLabel, placement, relativeTime, snippet, threadFile, threadPath } from '../format.ts';
+import { isOutdated, isYourTurn, lineLabel, placement, relativeTime, snippet, threadFile } from '../format.ts';
 import { useStore } from '../store.ts';
 import { Icon } from './icons.tsx';
 import { Markdown } from './Markdown.tsx';
-import { StatusChips, ThreadWidget } from './Thread.tsx';
+import { ThreadWidget } from './Thread.tsx';
 
 type Filter = 'yours' | 'claude' | 'pending' | 'open' | 'outdated' | 'resolved' | 'all' | 'archived';
 
 const FILTERS: Array<[Filter, string, (t: ThreadView) => boolean]> = [
-  ['yours', 'Your turn', (t) => t.status === 'open' && t.awaiting === 'user'],
+  ['yours', 'Your turn', isYourTurn],
   ['claude', 'Waiting for Claude', (t) => t.status === 'open' && t.awaiting === 'claude'],
   ['pending', 'Pending', (t) => t.comments.some((c) => c.draft)],
   ['open', 'Open', (t) => t.status === 'open'],
@@ -23,7 +23,6 @@ function ThreadsPanel() {
   const threads = useStore((s) => s.threads);
   const resolved = useStore((s) => s.resolved);
   const [filter, setFilter] = useState<Filter>('open');
-  const [expanded, setExpanded] = useState<number | null>(null);
   const { focus } = useStore.getState();
 
   const [archived, setArchived] = useState<ThreadView[] | null>(null);
@@ -55,29 +54,13 @@ function ThreadsPanel() {
         {shown.length === 0 && <div className="empty muted">No conversations here.</div>}
         {shown.map((t) => {
           const where = placement(t, resolved ? threadFile(t, resolved.files) : undefined);
-          const last = t.comments.at(-1);
-          const isOpen = expanded === t.id;
           return (
             <div key={t.id} className="panel-item">
-              {isOpen ? (
-                <ThreadWidget thread={t} showLocation />
-              ) : (
-                <button className="panel-item-summary" onClick={() => setExpanded(t.id)}>
-                  <div className="panel-item-head">
-                    <code>{threadPath(t)}:{lineLabel(t)}</code>
-                    {where === 'elsewhere' && <span className="chip" title="This file is not part of the current view">Not in view</span>}
-                    <StatusChips thread={t} />
-                  </div>
-                  {last && (
-                    <div className="panel-item-last">
-                      <strong>{last.author === 'claude' ? 'Claude' : 'You'}:</strong> {snippet(last.body)}
-                    </div>
-                  )}
-                </button>
-              )}
+              <ThreadWidget thread={t} showLocation defaultOpen={false} />
               <div className="panel-item-actions">
-                {isOpen && <button className="link-btn" onClick={() => setExpanded(null)}>Collapse</button>}
-                {where !== 'elsewhere' && <button className="link-btn" onClick={() => focus(t.id)}>Show in diff</button>}
+                {where === 'elsewhere'
+                  ? <span className="muted" title="This file is not part of the current view">Not in view</span>
+                  : <button className="link-btn" onClick={() => focus(t.id)}>Show in diff</button>}
               </div>
             </div>
           );
@@ -91,7 +74,8 @@ function ReviewPanel() {
   const draft = useStore((s) => s.draft);
   const reviews = useStore((s) => s.reviews);
   const threads = useStore((s) => s.threads);
-  const { setDraftBody, submit, focus } = useStore.getState();
+  const commitEach = useStore((s) => s.preferences.commit_each_review);
+  const { setDraftBody, submit, focus, setPreferences } = useStore.getState();
   const [body, setBody] = useState(draft?.body ?? '');
   const [busy, setBusy] = useState(false);
   const save = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
@@ -141,6 +125,10 @@ function ReviewPanel() {
           </ul>
         )}
         <textarea value={body} onChange={(e) => onBody(e.target.value)} rows={4} placeholder="Overall comment for this review (optional)" />
+        <label className="option" title="Claude commits what it changes for each review, one logical change per commit, and leaves pushing to you">
+          <input type="checkbox" checked={commitEach} onChange={(e) => void setPreferences({ commit_each_review: e.target.checked })} />
+          Claude commits its changes after each review (never pushes)
+        </label>
         <button className="btn btn-primary btn-block" disabled={!canSubmit} onClick={() => void doSubmit()}>
           {busy ? 'Submitting…' : 'Submit review'}
         </button>

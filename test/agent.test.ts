@@ -276,7 +276,7 @@ describe('CLI lifecycle', () => {
 describe('review formatting and CLI options', () => {
   it('explains apply_suggestion whenever a comment has a suggestion, whatever its fence', () => {
     const out = formatReview({
-      id: 1, status: 'in_progress', body: '', submitted_at: null,
+      id: 1, status: 'in_progress', body: '', submitted_at: null, commit: false,
       threads: [{
         id: 2, path: 'a.ts', side: 'new', start_line: 1, end_line: 1, anchor_text: 'x', status: 'open',
         needs_decision: false, awaiting_reply: true, anchor: { state: 'current', path: 'a.ts', start_line: 1, end_line: 1 },
@@ -302,7 +302,7 @@ describe('review formatting and CLI options', () => {
 describe('review formatting', () => {
   it('fences anchored code so backticks inside it cannot escape', () => {
     const out = formatReview({
-      id: 1, status: 'in_progress', body: '', submitted_at: null,
+      id: 1, status: 'in_progress', body: '', submitted_at: null, commit: false,
       threads: [{
         id: 2, path: 'a.md', side: 'new', start_line: 1, end_line: 1, anchor_text: 'x ```` y', status: 'open',
         needs_decision: false, awaiting_reply: true, anchor: { state: 'current', path: 'a.md', start_line: 1, end_line: 1 },
@@ -310,6 +310,18 @@ describe('review formatting', () => {
       }],
     });
     assert.match(out, /`````\nx ```` y\n`````/);
+  });
+
+  it('asks for atomic commits without a push only when the user wants each review committed', () => {
+    const review = {
+      id: 1, status: 'in_progress' as const, body: '', submitted_at: null, commit: false,
+      threads: [],
+    };
+    assert.doesNotMatch(formatReview(review), /commit the changes/);
+    const out = formatReview({ ...review, commit: true });
+    assert.match(out, /2\. Run the checks, then commit the changes you made for this review as atomic commits/);
+    assert.match(out, /Do not push/);
+    assert.match(out, /3\. Then call complete_review/);
   });
 });
 

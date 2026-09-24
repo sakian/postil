@@ -1,6 +1,7 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { initToken, setToken } from '../api.ts';
 import { subscribe } from '../events.ts';
+import { markKey, viewedBlob } from '../format.ts';
 import { handleKey, KEYMAP } from '../keyboard.ts';
 import { useStore } from '../store.ts';
 import { DiffPane } from './DiffPane.tsx';
@@ -41,6 +42,96 @@ function StaleBanner() {
     <div className="banner">
       Files changed on disk since this diff was loaded. Your view stays put until you refresh.
       <button className="btn btn-small" disabled={resolving} onClick={() => void refresh()}><Icon name="refresh" size={14} /> Refresh</button>
+    </div>
+  );
+}
+
+/** Claude finished a review: offer what changed and its replies, until dismissed. */
+function CompletedBanner() {
+  const id = useStore((s) => s.completedReview);
+  const { setScope, setPanel, dismissCompleted } = useStore.getState();
+  if (id === null) return null;
+  return (
+    <div className="banner banner-done">
+      <Icon name="check" size={16} />
+      <span>Claude finished review #{id}.</span>
+      <button className="btn btn-small" onClick={() => { void setScope({ kind: 'since_review', review_id: id }); setPanel('threads'); dismissCompleted(); }}>
+        Show changes since review #{id}
+      </button>
+      <button className="btn btn-small" onClick={() => setPanel('threads')}>Open conversations</button>
+      <span className="spacer" />
+      <button className="icon-btn" onClick={dismissCompleted} title="Dismiss"><Icon name="close" size={14} /></button>
+    </div>
+  );
+}
+
+/** Every file viewed and nothing left open: offer to end the session cleanly. */
+function FinishBanner() {
+  const files = useStore((s) => s.resolved?.files);
+  const viewed = useStore((s) => s.viewed);
+  const threads = useStore((s) => s.threads);
+  const draft = useStore((s) => s.draft);
+  const reviews = useStore((s) => s.reviews);
+  const finished = useStore((s) => s.sessionFinished);
+  const listening = useStore((s) => s.listening > 0);
+  const { finishSession } = useStore.getState();
+  const [busy, setBusy] = useState(false);
+  const [commit, setCommit] = useState(true);
+  const [push, setPush] = useState(false);
+  const ready = useMemo(() => {
+    if (!files?.length || finished) return false;
+    const allViewed = files.every((f) => {
+      const b = viewedBlob(f);
+      return b !== null && viewed.has(markKey(f.path, b));
+    });
+    return allViewed && threads.every((t) => t.status === 'resolved') && !draft?.comment_count &&
+      !reviews.some((r) => r.status === 'submitted' || r.status === 'in_progress');
+  }, [files, viewed, threads, draft, reviews, finished]);
+  if (!ready) return null;
+  return (
+    <div className="banner banner-done">
+      <Icon name="check" size={16} />
+      <span>Every file is viewed and every conversation resolved.</span>
+      {listening && (
+        <>
+          <label className="option"><input type="checkbox" checked={commit} onChange={(e) => setCommit(e.target.checked)} /> Commit anything left</label>
+          <label className="option"><input type="checkbox" checked={push} onChange={(e) => setPush(e.target.checked)} /> and push</label>
+        </>
+      )}
+      <button className="btn btn-small btn-primary" disabled={busy}
+        onClick={() => { setBusy(true); void finishSession(listening ? { commit, push } : {}).finally(() => setBusy(false)); }}>
+        Finish session
+      </button>
+      <span className="muted">Archives the conversations{listening ? ' and tells Claude to wrap up' : ''}.</span>
+    </div>
+  );
+}
+
+const CONFETTI = ['#1f883d', '#0969da', '#d97757', '#bf8700', '#8250df', '#cf222e'];
+
+function Finished() {
+  const finished = useStore((s) => s.sessionFinished);
+  const files = useStore((s) => s.resolved?.files.length ?? 0);
+  const reviews = useStore((s) => s.reviews.filter((r) => r.status !== 'draft').length);
+  const [open, setOpen] = useState(true);
+  useEffect(() => { if (finished) setOpen(true); }, [finished]);
+  if (!finished || !open) return null;
+  return (
+    <div className="modal-backdrop" onClick={() => setOpen(false)}>
+      <div className="confetti" aria-hidden>
+        {Array.from({ length: 40 }, (_, i) => (
+          <span key={i} style={{ left: `${(i * 37) % 100}%`, background: CONFETTI[i % CONFETTI.length], animationDelay: `${(i % 10) * 0.08}s` }} />
+        ))}
+      </div>
+      <div className="modal finished" role="dialog" aria-label="Review finished" onClick={(e) => e.stopPropagation()}>
+        <div className="finished-mark"><Icon name="check" size={32} /></div>
+        <h2>Review complete</h2>
+        <p className="muted">
+          {files} file{files === 1 ? '' : 's'} reviewed{reviews ? ` over ${reviews} review${reviews === 1 ? '' : 's'}` : ''}. Every conversation is
+          resolved and archived, and any listening Claude session has been told to wrap up.
+        </p>
+        <button className="btn btn-primary" onClick={() => setOpen(false)}>Done</button>
+      </div>
     </div>
   );
 }
@@ -106,11 +197,14 @@ export function App() {
         <Sidebar />
         <main className="main">
           <StaleBanner />
+          <CompletedBanner />
+          <FinishBanner />
           <DiffPane />
         </main>
         <SidePanel />
       </div>
       <Toasts />
+      <Finished />
       {help && <KeyHelp onClose={() => setHelp(false)} />}
     </div>
   );

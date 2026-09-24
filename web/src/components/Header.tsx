@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import type { Scope } from '../../../src/core/api-types.ts';
 import { api } from '../api.ts';
-import { basename, shortSha } from '../format.ts';
+import { basename, isYourTurn, shortSha } from '../format.ts';
 import { useStore } from '../store.ts';
 import { CommitPicker } from './CommitPicker.tsx';
 
@@ -122,7 +122,7 @@ export function Header() {
   const panel = useStore((s) => s.panel);
   const threads = useStore((s) => s.threads);
   const { setView, setPanel } = useStore.getState();
-  const yourTurn = threads.filter((t) => t.status === 'open' && t.awaiting === 'user').length;
+  const yourTurn = threads.filter(isYourTurn).length;
   const pending = draft?.comment_count ?? 0;
 
   return (

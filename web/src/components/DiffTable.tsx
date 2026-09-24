@@ -5,7 +5,8 @@ import { buildRows, EXPAND_STEP, foldDone, gaps, oldToNewInGaps, toSplit, type R
 import { hunkDone, validMarks } from '../lib/sections.ts';
 import { isSelected, splitSelection, unifiedSelection, type Selection } from '../lib/selection.ts';
 import { currentLines, diffKey, sidePath } from '../format.ts';
-import { renderTokens, type Token } from '../highlight/index.tsx';
+import { renderEmphasis, renderTokens, type Token } from '../highlight/index.tsx';
+import { wordHighlights, type Span } from '../lib/worddiff.ts';
 import { useStore, type Target } from '../store.ts';
 import { Icon } from './icons.tsx';
 import { NewThreadComposer, ThreadWidget } from './Thread.tsx';
@@ -86,6 +87,9 @@ export function DiffTable({ file, diff, threads }: Props) {
     [diff, revealed, forced, newLines, folded],
   );
   const split = useMemo(() => (view === 'split' ? toSplit(rows) : null), [rows, view]);
+  // The words that changed within each removed line and the added line it pairs with.
+  const words = useMemo(() => wordHighlights(rows), [rows]);
+  const wordsFor = (side: Side, no: number | null): Span[] | undefined => (no === null ? undefined : words.get(`${side}:${no}`));
 
   // Threads and the open composer attach below the last line they cover, per side.
   const threadsAt = useMemo(() => {
@@ -194,7 +198,7 @@ export function DiffTable({ file, diff, threads }: Props) {
           </td>
         </tr>
         {inside.length > 0 && (
-          <tr className="attach-row"><td colSpan={width}>{inside.map((t) => <ThreadWidget key={t.id} thread={t} />)}</td></tr>
+          <tr className="attach-row"><td colSpan={width}>{inside.map((t) => <ThreadWidget key={t.id} thread={t} defaultOpen={false} />)}</td></tr>
         )}
       </Fragment>
     );
@@ -204,7 +208,7 @@ export function DiffTable({ file, diff, threads }: Props) {
     const count = r.end - r.start + 1;
     const doExpand = (range: Range) => void expand(file, range);
     return (
-      <tr key={r.key} className="expander-row">
+      <tr key={r.key} className={`expander-row${r.hunk !== null ? ' sticky-hunk' : ''}`}>
         <td colSpan={view === 'split' ? 1 : 2} className="expander-controls">
           {count <= EXPAND_STEP ? (
             <button className="expander-btn" title={`Show ${count} hidden line${count === 1 ? '' : 's'}`} onClick={() => doExpand([r.start, r.end])}>
@@ -249,15 +253,15 @@ export function DiffTable({ file, diff, threads }: Props) {
   );
 
   const hunkRow = (r: Extract<Row, { type: 'hunk' }>) => (
-    <tr key={r.key} className="hunk-row">
+    <tr key={r.key} className="hunk-row sticky-hunk">
       <td colSpan={view === 'split' ? 1 : 2} />
       <td colSpan={view === 'split' ? 3 : 2}>{r.header}{doneToggle(r.hunk)}</td>
     </tr>
   );
 
-  const code = (text: string, noEol: boolean, tokens?: Token[]) => (
+  const code = (text: string, noEol: boolean, tokens?: Token[], spans?: Span[]) => (
     <>
-      <span className="code-text">{renderTokens(text, tokens)}</span>
+      <span className="code-text">{spans ? renderEmphasis(text, tokens, spans) : renderTokens(text, tokens)}</span>
       {noEol && <span className="no-eol" title="No newline at end of file">⊘</span>}
     </>
   );
@@ -289,7 +293,9 @@ export function DiffTable({ file, diff, threads }: Props) {
                   <td className="num" data-no={r.oldNo ?? ''} onMouseDown={(e) => onGutterDown(e, i, null)} />
                   <td className="num" data-no={r.newNo ?? ''} onMouseDown={(e) => onGutterDown(e, i, null)} />
                   <td className="marker">{addButton(i, null)}{r.kind === 'add' ? '+' : r.kind === 'del' ? '-' : ' '}</td>
-                  <td className="code">{code(r.text, r.noEol, r.kind === 'del' ? tokensFor('old', r.oldNo) : tokensFor('new', r.newNo))}</td>
+                  <td className="code">{r.kind === 'del'
+                    ? code(r.text, r.noEol, tokensFor('old', r.oldNo), wordsFor('old', r.oldNo))
+                    : code(r.text, r.noEol, tokensFor('new', r.newNo), r.kind === 'add' ? wordsFor('new', r.newNo) : undefined)}</td>
                 </tr>
                 {r.kind === 'context' && attachments('old', r.oldNo)}
                 {attachments(side, no)}
@@ -324,13 +330,13 @@ export function DiffTable({ file, diff, threads }: Props) {
                   onMouseDown={left ? (e) => onGutterDown(e, i, 'old') : undefined} />
                 <td className={`code ${cellClass(left?.kind, left?.expanded)}${selL ? ' selected' : ''}`}>
                   {left && addButton(i, 'old')}
-                  {left && code(left.text, left.noEol, tokensFor('old', left.no))}
+                  {left && code(left.text, left.noEol, tokensFor('old', left.no), left.kind === 'del' ? wordsFor('old', left.no) : undefined)}
                 </td>
                 <td className={`num ${cellClass(right?.kind, right?.expanded)}${selR ? ' selected' : ''}`} data-no={right?.no ?? ''}
                   onMouseDown={right ? (e) => onGutterDown(e, i, 'new') : undefined} />
                 <td className={`code ${cellClass(right?.kind, right?.expanded)}${selR ? ' selected' : ''}`}>
                   {right && addButton(i, 'new')}
-                  {right && code(right.text, right.noEol, tokensFor('new', right.no))}
+                  {right && code(right.text, right.noEol, tokensFor('new', right.no), right.kind === 'add' ? wordsFor('new', right.no) : undefined)}
                 </td>
               </tr>
               {left && attachments('old', left.no)}

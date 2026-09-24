@@ -47,6 +47,11 @@ up on its own, changes the code, replies to each comment, and marks the review c
 again or resolve threads, submit again, and repeat until you are happy. The header shows whether
 Claude is listening.
 
+When every file is viewed and every conversation resolved, **Finish session** archives the
+conversations and tells Claude to stop listening, and can have it commit anything left and push.
+To have Claude commit its changes after each review instead (never pushing), tick that option
+under **Finish review**.
+
 For hands-free rounds, Claude must be able to edit without asking: run the session in
 accept-edits or auto mode. The plugin's hooks act only in the session that ran `/postil:review`;
 another session started in the same repository is just told, in one line, that a review server

@@ -146,6 +146,22 @@ export interface AgentReview {
   body: string;
   submitted_at: string | null;
   threads: AgentThread[];
+  /** The user wants each review's changes committed (atomic commits, not pushed). */
+  commit: boolean;
+}
+
+/** How the user wants Claude to work, kept per repository. */
+export interface Preferences {
+  /** Commit the changes for each review as atomic commits, without pushing. */
+  commit_each_review: boolean;
+}
+
+/** What Claude should do as the session ends. */
+export interface FinishOptions {
+  /** Commit anything not yet committed. */
+  commit?: boolean;
+  /** Push the branch afterwards. */
+  push?: boolean;
 }
 
 export interface CommitsInfo {

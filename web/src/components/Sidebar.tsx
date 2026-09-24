@@ -1,6 +1,6 @@
 import { useMemo } from 'react';
 import { markKey, threadFile, viewedBlob } from '../format.ts';
-import { buildTree, dirPaths, flatten } from '../lib/tree.ts';
+import { buildTree, dirPaths, filesUnder, flatten } from '../lib/tree.ts';
 import { useStore } from '../store.ts';
 import { StatusBadge } from './DiffPane.tsx';
 import { Icon } from './icons.tsx';
@@ -31,10 +31,11 @@ export function Sidebar() {
   }, [threads, resolved]);
 
   const files = resolved?.files ?? [];
-  const viewedCount = files.filter((f) => {
+  const isViewed = (f: (typeof files)[number]) => {
     const b = viewedBlob(f);
     return b !== null && viewed.has(markKey(f.path, b));
-  }).length;
+  };
+  const viewedCount = files.filter(isViewed).length;
   const anyCollapsed = allDirs.some((d) => collapsed.has(d));
 
   return (
@@ -56,26 +57,33 @@ export function Sidebar() {
           const pad = { paddingLeft: `${8 + depth * 14}px` };
           if (node.type === 'dir') {
             const isCollapsed = collapsed.has(node.path);
+            // A collapsed folder summarises what is inside: files left to view, and open conversations.
+            const inside = isCollapsed ? filesUnder(node) : [];
+            const left = inside.filter((f) => !isViewed(f)).length;
+            const open = inside.reduce((n, f) => n + (openByPath.get(f.path) ?? 0), 0);
             return (
               <button key={`d:${node.path}`} className="tree-row tree-dir" style={pad} onClick={() => toggleDir(node.path)} aria-expanded={!isCollapsed}>
                 <Icon name={isCollapsed ? 'chevronRight' : 'chevronDown'} size={14} />
                 <Icon name="folder" size={14} />
                 <span className="tree-name">{node.name}</span>
+                {isCollapsed && open > 0 && <span className="tree-badge" title={`${open} open conversation(s)`}>{open}</span>}
+                {isCollapsed && (left > 0
+                  ? <span className="tree-count" title={`${left} of ${inside.length} file(s) not viewed yet`}>{left} to view</span>
+                  : <Icon name="check" size={14} title="Every file viewed" />)}
               </button>
             );
           }
           const f = node.file;
-          const b = viewedBlob(f);
-          const isViewed = b !== null && viewed.has(markKey(f.path, b));
+          const fileViewed = isViewed(f);
           const open = openByPath.get(f.path) ?? 0;
           return (
-            <button key={`f:${node.path}`} className={`tree-row tree-file${isViewed ? ' is-viewed' : ''}`} style={pad}
+            <button key={`f:${node.path}`} className={`tree-row tree-file${fileViewed ? ' is-viewed' : ''}`} style={pad}
               onClick={() => revealFile(f.path)} title={f.path}>
               <StatusBadge file={f} />
               <span className="tree-name">{node.name}</span>
               {updated && updatedPaths.has(f.path) && <span className="tree-updated" title={`Changed since you submitted review #${updated?.review_id}`} />}
               {open > 0 && <span className="tree-badge" title={`${open} open conversation(s)`}>{open}</span>}
-              {isViewed && <Icon name="check" size={14} title="Viewed" />}
+              {fileViewed && <Icon name="check" size={14} title="Viewed" />}
             </button>
           );
         })}

@@ -755,6 +755,41 @@ describe('archiving and pruning', () => {
       fx.cleanup();
     }
   });
+
+  it('finishes a session only when nothing is left, archiving it and telling Claude', async () => {
+    const fx = makeFixture();
+    try {
+      fx.write('f.txt', numbered(10));
+      fx.commit('base');
+      const postil = await Postil.open(fx.dir);
+      const rec = recorder(postil);
+      fx.write('f.txt', numbered(10, { 2: 'two' }));
+      const s = await postil.resolveScope({ kind: 'all' });
+      const t = await postil.createThread({ from_tree: s.from.tree, to_tree: s.to.tree, path: 'f.txt', side: 'new', start_line: null, body: 'whole file' });
+      assert.equal(t.start_line, null, 'a comment on the whole file');
+      await rejectsWith(postil.finishSession(), 'not_finished'); // a pending comment
+
+      const review = await postil.submitReview();
+      await rejectsWith(postil.finishSession(), 'not_finished'); // Claude has not handled it
+      assert.equal((await postil.reviewForAgent(review.id)).commit, false);
+      postil.setPreferences({ commit_each_review: true });
+      assert.equal((await postil.reviewForAgent(review.id)).commit, true, 'the review carries the request to commit');
+      await postil.agentReply(t.id, 'done');
+      await postil.completeReview(review.id, 'ok');
+      await rejectsWith(postil.finishSession(), 'not_finished'); // the conversation is still open
+      postil.resolveThread(t.id);
+
+      rec.clear();
+      const r = await postil.finishSession({ commit: true, push: true });
+      assert.deepEqual([r.threads, r.reviews], [1, 1]);
+      assert.deepEqual(rec.agent(), ['session.finished'], 'Claude hears only that the session is over');
+      assert.deepEqual(rec.events.find((e) => e.event.type === 'session.finished')?.event, { type: 'session.finished', commit: true, push: true });
+      assert.deepEqual(postil.threads(), []);
+      postil.close();
+    } finally {
+      fx.cleanup();
+    }
+  });
 });
 
 describe('hardening', () => {

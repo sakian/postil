@@ -71,6 +71,14 @@ export function placement(t: ThreadView, file: FileChange | undefined): Placemen
   return currentLines(t).start === null ? 'file' : 'inline';
 }
 
+/**
+ * The thread waits on the user and they have not answered it yet. A reply still pending in the
+ * draft review is an answer: it goes to Claude with the review.
+ */
+export function isYourTurn(t: ThreadView): boolean {
+  return t.status === 'open' && t.awaiting === 'user' && !t.comments.at(-1)?.draft;
+}
+
 export function isOutdated(t: ThreadView): boolean {
   return t.anchor?.state === 'outdated' || t.anchor?.state === 'gone';
 }

@@ -16,7 +16,7 @@ export { agentHint } from './hints.ts';
 import { HttpError } from './util.ts';
 
 import type {
-  AgentReview, AgentThread, AppliedSuggestion, BaseConfig, BaseInfo, BranchesInfo, CommentView, CommitsInfo, Endpoint, FileDiff, HookStatus, ListenResult,
+  AgentReview, AgentThread, AppliedSuggestion, BaseConfig, BaseInfo, BranchesInfo, CommentView, FinishOptions, Preferences, CommitsInfo, Endpoint, FileDiff, HookStatus, ListenResult,
   NewThreadInput, ResolvedScope, ReviewView, Scope, ThreadView,
 } from './api-types.ts';
 
@@ -834,7 +834,10 @@ export class Postil {
       });
     }
     const fresh = this.store.getReview(reviewId)!;
-    return { id: fresh.id, status: fresh.status, body: fresh.body, submitted_at: fresh.submitted_at, threads: result };
+    return {
+      id: fresh.id, status: fresh.status, body: fresh.body, submitted_at: fresh.submitted_at, threads: result,
+      commit: this.preferences().commit_each_review,
+    };
   }
 
   /** Claude's reply, published immediately so the UI shows progress while it works. */
@@ -951,6 +954,35 @@ export class Postil {
     const { unpinned } = await this.prune();
     this.bus.emit({ type: 'archive.changed' });
     return { ...archived, unpinned };
+  }
+
+  /**
+   * The user is done: every conversation resolved, nothing pending. Archive what is finished and
+   * tell listening Claude sessions they can stop. Refuses while anything is still open.
+   */
+  preferences(): Preferences {
+    const stored = JSON.parse(this.store.getSetting('preferences') ?? '{}') as Partial<Preferences>;
+    return { commit_each_review: stored.commit_each_review === true };
+  }
+
+  setPreferences(change: Partial<Preferences>): Preferences {
+    const next = { ...this.preferences(), ...change };
+    this.store.setSetting('preferences', JSON.stringify(next));
+    this.bus.emit({ type: 'preferences.changed' });
+    return next;
+  }
+
+  async finishSession(opts: FinishOptions = {}): Promise<{ threads: number; reviews: number; unpinned: number }> {
+    const open = this.store.listThreads({ status: 'open' }).length;
+    const pending = this.draft()?.comment_count ?? 0;
+    const active = this.store.listReviews(['submitted', 'in_progress']).length > 0;
+    if (open || pending || active) {
+      throw new HttpError(409, 'resolve every conversation and let Claude finish before ending the session', 'not_finished');
+    }
+    const archived = await this.archiveResolved();
+    // Claude does any committing and pushing the user asked for, then stops listening.
+    this.bus.emit({ type: 'session.finished', commit: opts.commit === true, push: opts.push === true }, ['ui', 'agent']);
+    return archived;
   }
 
   /**

@@ -1,5 +1,5 @@
 import type {
-  AnchoredSectionMark, AppliedSuggestion, SectionMarkRow, Side, BaseInfo, BranchesInfo, CommitsInfo, FileDiff, FileMarkRow, Health, NewThreadInput, ResolvedDiff, ReviewView, Scope, ThreadView,
+  AnchoredSectionMark, AppliedSuggestion, SectionMarkRow, Side, BaseInfo, BranchesInfo, CommitsInfo, FinishOptions, Preferences, FileDiff, FileMarkRow, Health, NewThreadInput, ResolvedDiff, ReviewView, Scope, ThreadView,
 } from '../../src/core/api-types.ts';
 
 const TOKEN_KEY = 'postil.token';
@@ -102,6 +102,9 @@ export const api = {
 
   reviews: () => call<{ reviews: ReviewView[] }>('GET', '/api/reviews'),
   archive: () => call<{ threads: number; reviews: number; unpinned: number }>('POST', '/api/archive'),
+  finishSession: (opts: FinishOptions) => call<{ threads: number; reviews: number; unpinned: number }>('POST', '/api/session/finish', opts),
+  preferences: () => call<Preferences>('GET', '/api/preferences'),
+  setPreferences: (change: Partial<Preferences>) => call<Preferences>('PUT', '/api/preferences', change),
   archivedThreads: () => call<{ threads: ThreadView[] }>('GET', '/api/archive/threads'),
   draft: () => call<{ draft: ReviewView | null }>('GET', '/api/reviews/draft'),
   setDraftBody: (body: string) => call<ReviewView>('PUT', '/api/reviews/draft', { body }),

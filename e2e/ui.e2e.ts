@@ -182,12 +182,17 @@ describe('postil UI', { timeout: 120_000 }, () => {
     await agent('POST', `/api/agent/threads/${retryThread.id}/reply`, { body: 'Applied the suggestion.' });
     await agent('POST', '/api/agent/reviews/1/complete', { summary: 'Answered both threads; one needs your call.' });
 
-    await page.locator('.toast', { hasText: 'Claude finished review #1' }).waitFor();
+    // A finished review stays announced until dismissed, with a way to see what Claude changed.
+    const finished = page.locator('.banner-done', { hasText: 'Claude finished review #1' });
+    await finished.waitFor();
+    assert.equal(await finished.getByRole('button', { name: 'Show changes since review #1' }).count(), 1);
     const db = file('src/db.ts');
     await until(async () => /now propagate/.test(await db.innerText()), "Claude's reply in the db.ts thread");
     assert.match(await db.locator('.thread').innerText(), /Needs your decision/);
     assert.match(await page.locator('.claude-status').innerText(), /not listening/, 'no Claude session is connected in this test');
     await shot('07-claude-replied');
+    await finished.getByTitle('Dismiss').click();
+    await until(async () => (await finished.count()) === 0, 'the banner to go');
   });
 
   it('notices files changing on disk and keeps outdated comments visible in the diff', async () => {
@@ -238,9 +243,14 @@ describe('postil UI', { timeout: 120_000 }, () => {
     const panel = page.locator('.side-panel');
     await panel.locator('.panel-filters').getByRole('button', { name: /Your turn/ }).click();
     await until(async () => (await panel.locator('.panel-item').count()) === 2, 'two threads awaiting me');
-    await panel.locator('.panel-item-summary', { hasText: 'src/retry.ts' }).click();
-    const thread = panel.locator('.thread');
-    await thread.waitFor();
+    // Collapsed, every conversation is the same two lines: where, then the latest comment.
+    assert.equal(await panel.locator('.thread.is-collapsed .thread-peek').count(), 2);
+    const thread = panel.locator('.panel-item', { hasText: 'src/retry.ts' }).locator('.thread');
+    await thread.locator('.thread-head').click();
+    await thread.locator('.thread-body').waitFor();
+    // The code it was written on, in the diff of the time.
+    await thread.getByRole('button', { name: 'Original diff' }).click();
+    await until(async () => (await thread.locator('.thread-diff tr.line.selected').count()) > 0, 'the commented lines in the original diff');
     await shot('10-conversations');
     await thread.getByRole('button', { name: 'Resolve conversation' }).click();
     await until(async () => (await panel.locator('.panel-item').count()) === 1, 'the resolved thread to leave "Your turn"');

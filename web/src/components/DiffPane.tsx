@@ -2,19 +2,18 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, typ
 import type { FileChange, ThreadView } from '../../../src/core/api-types.ts';
 import { api } from '../api.ts';
 import { diffKey, markKey, placement, shortSha, threadFile, viewedBlob } from '../format.ts';
+import { fileAnchor, takePin } from '../lib/pin.ts';
 import { hunkDone, validMarks } from '../lib/sections.ts';
 import { buildTree, fileOrder } from '../lib/tree.ts';
 import { useStore } from '../store.ts';
 import { DiffTable } from './DiffTable.tsx';
 import { Icon } from './icons.tsx';
-import { ThreadWidget } from './Thread.tsx';
+import { FileComposer, ThreadWidget } from './Thread.tsx';
 
 /** Files with more changed lines than this start collapsed behind a "Load diff" button. */
 export const LARGE_DIFF_LINES = 1500;
 
-export function fileAnchor(path: string): string {
-  return `file-${encodeURIComponent(path).replace(/%/g, '_')}`;
-}
+export { fileAnchor } from '../lib/pin.ts';
 
 const STATUS_LETTER: Record<FileChange['status'], string> = { added: 'A', modified: 'M', deleted: 'D', renamed: 'R', type_changed: 'T' };
 
@@ -56,15 +55,22 @@ function FileView({ file, threads }: { file: FileChange; threads: ThreadView[] }
   const fold = useStore((s) => s.fileFold[file.path]);
   const focusThread = useStore((s) => s.focusThread);
   const hasRevealed = useStore((s) => (file.new_blob ? (s.expanded[file.new_blob]?.length ?? 0) > 0 : false));
-  const { loadDiff, setViewed, setFold, expandFile, collapseFile } = useStore.getState();
+  const composingFile = useStore((s) => s.fileComposer === file.path);
+  const { loadDiff, setViewed, setFold, expandFile, collapseFile, openFileComposer } = useStore.getState();
   const folded = fold ?? viewed;
   const ref = useRef<HTMLElement>(null);
+
+  // Folded from partway through (see lib/pin.ts): bring this file's start back to the top.
+  useLayoutEffect(() => {
+    if (takePin(file.path)) ref.current?.scrollIntoView({ block: 'start' });
+  }, [folded, file.path]);
   const bodyRef = useRef<HTMLDivElement>(null);
   /** Within about two screens of the viewport. Bodies outside that are swapped for a placeholder. */
   const [near, setNear] = useState(false);
   const [placeholder, setPlaceholder] = useState<number | null>(null);
   const holdsWork = useStore(
-    (s) => s.composer?.path === file.path || s.selection?.path === file.path || (s.focusThread !== null && threads.some((t) => t.id === s.focusThread)),
+    (s) => s.composer?.path === file.path || s.fileComposer === file.path || s.selection?.path === file.path ||
+      (s.focusThread !== null && threads.some((t) => t.id === s.focusThread)),
   );
 
   // The observer's root is the scrolling pane, so its margin applies there. A file that mounts
@@ -192,13 +198,17 @@ function FileView({ file, threads }: { file: FileChange; threads: ThreadView[] }
           <span className="file-stats"><span className="adds">+{file.additions}</span> <span className="dels">−{file.deletions}</span></span>
         )}
         {openCount > 0 && <span className="chip chip-comments" title={`${openCount} open conversation(s)`}><Icon name="comment" size={12} /> {openCount}</span>}
-        {progress && progress.done > 0 && (
+        {progress && progress.done > 0 && !viewed && (
           <span className={`chip chip-sections${progress.done === progress.total ? ' all' : ''}`} title="Sections marked done">
             {progress.done}/{progress.total} sections done
           </span>
         )}
         {updated && <span className="chip chip-updated" title={`Changed since you submitted review #${sinceReviewId}`}>Updated</span>}
         <span className="spacer" />
+        <button className="btn btn-small" data-action="file-comment" onClick={() => openFileComposer(composingFile ? null : file.path)}
+          title="Comment on the whole file">
+          <Icon name="comment" size={14} /> Comment
+        </button>
         {ready && ready.new_lines !== null && ready.hunks.length > 0 && !folded && (
           <>
             <button className="btn btn-small" data-action="expand-all" onClick={() => void expandFile(file, ready.new_lines!)} title="Show the whole file (e)">
@@ -224,8 +234,11 @@ function FileView({ file, threads }: { file: FileChange; threads: ThreadView[] }
               {groups.gone.map((t) => <ThreadWidget key={t.id} thread={t} />)}
             </div>
           )}
-          {groups.fileLevel.length > 0 && (
-            <div className="file-threads">{groups.fileLevel.map((t) => <ThreadWidget key={t.id} thread={t} />)}</div>
+          {(groups.fileLevel.length > 0 || composingFile) && (
+            <div className="file-threads">
+              {groups.fileLevel.map((t) => <ThreadWidget key={t.id} thread={t} />)}
+              {composingFile && <FileComposer file={file} />}
+            </div>
           )}
           {body}
         </div>
@@ -261,16 +274,23 @@ function FileList({ files, byFile }: { files: FileChange[]; byFile: Map<string, 
   const viewed = useStore((s) => s.viewed);
   const [range, setRange] = useState<[number, number]>(() => [0, Math.min(files.length, 30)]);
   const reveal = useStore((s) => s.revealPath);
-  /** A file being brought into view, held at the top while the heights around it settle. */
-  const holding = useRef<{ path: string; until: number } | null>(null);
+  /**
+   * A file (or a conversation in it) being brought into view, held in place while the files
+   * around it load and change height. Each change extends the hold, up to a limit.
+   */
+  const holding = useRef<{ path: string; anchor?: string | undefined; until: number; cap: number } | null>(null);
   const hold = useCallback(() => {
     const h = holding.current;
     if (!h) return;
-    if (Date.now() > h.until) {
+    const now = Date.now();
+    if (now > h.until) {
       holding.current = null;
       return;
     }
-    document.getElementById(fileAnchor(h.path))?.scrollIntoView({ block: 'start' });
+    h.until = Math.min(h.cap, now + 1500);
+    const anchor = h.anchor ? document.getElementById(h.anchor) : null;
+    if (anchor) anchor.scrollIntoView({ block: 'center' });
+    else document.getElementById(fileAnchor(h.path))?.scrollIntoView({ block: 'start' });
   }, []);
 
   // Any scrolling of the user's own ends the hold at once.
@@ -334,9 +354,9 @@ function FileList({ files, byFile }: { files: FileChange[]; byFile: Map<string, 
     };
   }, [virtual, compute]);
 
-  // Measure mounted files, so spacers converge on real heights as the user scrolls.
+  // Measure mounted files, so spacers converge on real heights as the user scrolls, and a file
+  // being revealed stays put as the files above it load.
   useLayoutEffect(() => {
-    if (!virtual) return;
     let frame = 0;
     const ro = new ResizeObserver((entries) => {
       let changed = false;
@@ -348,7 +368,7 @@ function FileList({ files, byFile }: { files: FileChange[]; byFile: Map<string, 
           changed = true;
         }
       }
-      if (changed && !frame) frame = requestAnimationFrame(() => { frame = 0; compute(); hold(); });
+      if (changed && !frame) frame = requestAnimationFrame(() => { frame = 0; if (virtual) compute(); hold(); });
     });
     listRef.current?.querySelectorAll('section.file').forEach((el) => ro.observe(el));
     return () => { cancelAnimationFrame(frame); ro.disconnect(); };
@@ -360,7 +380,6 @@ function FileList({ files, byFile }: { files: FileChange[]; byFile: Map<string, 
     const el = document.getElementById(fileAnchor(reveal.path));
     if (el) {
       el.scrollIntoView({ block: 'start' });
-      if (!virtual) return;
     } else {
       const i = files.findIndex((f) => f.path === reveal.path);
       const g = geometry();
@@ -369,7 +388,7 @@ function FileList({ files, byFile }: { files: FileChange[]; byFile: Map<string, 
       compute();
     }
     // Files around it are measured as they mount and load, which moves it; keep it in place meanwhile.
-    holding.current = { path: reveal.path, until: Date.now() + 2000 };
+    holding.current = { path: reveal.path, anchor: reveal.anchor, until: Date.now() + 2500, cap: Date.now() + 10_000 };
     requestAnimationFrame(() => requestAnimationFrame(hold));
   }, [reveal]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -410,7 +429,7 @@ export function DiffPane() {
     if (focusThread === null || !resolved) return;
     const t = threads.find((x) => x.id === focusThread);
     const f = t && threadFile(t, resolved.files);
-    if (f) revealFile(f.path);
+    if (f) revealFile(f.path, `thread-${focusThread}`);
   }, [focusThread]); // eslint-disable-line react-hooks/exhaustive-deps
 
   if (resolveError) return <div className="empty error">Could not load the diff: {resolveError}</div>;

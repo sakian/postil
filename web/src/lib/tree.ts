@@ -74,3 +74,8 @@ export function dirPaths<F>(nodes: readonly TreeNode<F>[]): string[] {
 export function fileOrder<F>(nodes: readonly TreeNode<F>[]): F[] {
   return nodes.flatMap((n) => (n.type === 'file' ? [n.file] : fileOrder(n.children)));
 }
+
+/** Every file under a directory, at any depth. */
+export function filesUnder<F>(dir: DirNode<F>): F[] {
+  return fileOrder(dir.children);
+}
