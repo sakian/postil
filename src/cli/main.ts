@@ -22,8 +22,9 @@ Commands:
   base [<rev> | --branch <b> | --empty | --reset]
                            Show the base that "all changes" is measured from, or change it.
                            --branch measures from the merge base with <b>, following it like a
-                           pull request; --reset goes back to the default (the pull request's
-                           base branch, per gh, or the default branch)
+                           pull request (give origin/<b> to use the remote's copy); --reset goes
+                           back to the default (origin's copy of the pull request's base branch,
+                           per gh, or the default branch)
                            --empty reviews the whole tree, as if every file were new
   archive                  Archive resolved conversations and finished reviews, and release their snapshots
   doctor                   Check Node, git, the UI build, the Claude Code plugin, and the server

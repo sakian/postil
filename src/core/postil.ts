@@ -100,8 +100,10 @@ export class Postil {
       this.repo.currentBranch(), this.repo.defaultBranch(), this.repo.head(),
     ]);
     if (!branch || !head || branch === fallback) return { mode: 'commit', commit: head };
+    // GitHub diffs a pull request against the remote branch, and a local copy can be stale or
+    // diverged (after a force push), so prefer origin's.
     const prBase = await this.repo.pullRequestBase();
-    const target = (prBase && (await this.repo.findBranch(prBase))) ?? fallback;
+    const target = (prBase && ((await this.repo.findBranch(`origin/${prBase}`)) ?? (await this.repo.findBranch(prBase)))) ?? fallback;
     return target && target !== branch ? { mode: 'merge-base', target } : { mode: 'commit', commit: head };
   }
 
