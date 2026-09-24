@@ -1,7 +1,0 @@
-node_modules/
-dist/
-*.log
-*.out
-.DS_Store
-e2e/screenshots/
-plugin/dist/
