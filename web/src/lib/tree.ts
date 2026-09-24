@@ -17,15 +17,18 @@ export type TreeNode<F> = DirNode<F> | FileNode<F>;
 
 export function buildTree<F extends { path: string }>(files: readonly F[]): TreeNode<F>[] {
   const root: DirNode<F> = { type: 'dir', name: '', path: '', children: [] };
+  // Directories by path, so each lookup is constant time rather than a scan of its parent.
+  const dirs = new Map<string, DirNode<F>>([['', root]]);
   for (const file of files) {
     const parts = file.path.split('/');
     let dir = root;
     for (let i = 0; i < parts.length - 1; i++) {
       const path = parts.slice(0, i + 1).join('/');
-      let next = dir.children.find((c): c is DirNode<F> => c.type === 'dir' && c.path === path);
+      let next = dirs.get(path);
       if (!next) {
         next = { type: 'dir', name: parts[i]!, path, children: [] };
         dir.children.push(next);
+        dirs.set(path, next);
       }
       dir = next;
     }

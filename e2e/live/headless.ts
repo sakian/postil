@@ -8,13 +8,13 @@ import { strict as assert } from 'node:assert';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { makeDemoRepo } from '../fixture.ts';
-import { api, pathWithPostil, postil, reviewAddressed, startHeadless, submitReview, toolCalls, waitFor } from './lib.ts';
+import { api, userPath, postil, reviewAddressed, startHeadless, submitReview, toolCalls, waitFor } from './lib.ts';
 import type { ThreadView } from '../../src/core/api-types.ts';
 
 const fx = makeDemoRepo();
-const path = pathWithPostil();
+const path = userPath();
 try {
-  postil(fx.dir, path, 'start', '--port', '0');
+  postil(fx.dir, 'start', '--port', '0');
   const reviewId = await submitReview(fx.dir, 'Two things before I merge this.', [
     { path: 'src/db.ts', line: 'params: unknown[] = []', text: 'Rename `params` to `bindings` in this function.' },
     { path: 'src/retry.ts', line: 'Math.random()', text: 'Why add random jitter to the delay? One sentence is enough.' },
@@ -55,6 +55,6 @@ try {
   assert.match(readFileSync(join(fx.dir, 'src/time.ts'), 'utf8'), /new Promise<void>/);
   console.log('\nLIVE TEST 1 PASSED');
 } finally {
-  try { postil(fx.dir, path, 'stop'); } catch { /* already stopped */ }
+  try { postil(fx.dir, 'stop'); } catch { /* already stopped */ }
   fx.cleanup();
 }

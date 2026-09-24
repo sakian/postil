@@ -64,6 +64,12 @@ describe('base selection', () => {
       assert.deepEqual([base.config.mode, base.commit], ['commit', c1]);
       base = await postil.resetBase();
       assert.equal(base.commit, root);
+
+      // An empty base puts every file in the tree under review.
+      base = await postil.setBase(null);
+      assert.deepEqual([base.commit, base.tree], [null, await postil.repo.emptyTree()]);
+      const all = await postil.resolveScope({ kind: 'all' });
+      assert.deepEqual((await postil.files(all.from.tree, all.to.tree)).map((f) => [f.path, f.status]), [['a', 'added']]);
       postil.close();
     } finally {
       fx.cleanup();
@@ -806,6 +812,71 @@ describe('hardening', () => {
       assert.match(readFileSync(join(fx.dir, path), 'utf8'), /^line 1\ntwo\nline 3/);
     } finally {
       cleanup();
+    }
+  });
+});
+
+describe('review fixes', () => {
+  it('does not archive a resolved thread holding an unsent reply, and un-archives a reopened one', async () => {
+    const fx = makeFixture();
+    try {
+      fx.write('f.txt', numbered(5));
+      fx.commit('base');
+      const postil = await Postil.open(fx.dir);
+      fx.write('f.txt', numbered(5, { 2: 'two' }));
+      const s = await postil.resolveScope({ kind: 'all' });
+      const t = await postil.createThread({ from_tree: s.from.tree, to_tree: s.to.tree, path: 'f.txt', side: 'new', start_line: 2, body: 'a' });
+      const other = await postil.createThread({ from_tree: s.from.tree, to_tree: s.to.tree, path: 'f.txt', side: 'new', start_line: 3, body: 'b' });
+      await postil.submitReview();
+      postil.resolveThread(t.id);
+      postil.resolveThread(other.id);
+      postil.replyAsUser(t.id, 'one more thing'); // unsent
+
+      const r = await postil.archiveResolved();
+      assert.equal(r.threads, 1, 'only the thread with nothing pending is archived');
+      assert.deepEqual(postil.archivedThreads().map((x) => x.id), [other.id]);
+
+      await postil.submitReview();
+      assert.equal(postil.thread(t.id).status, 'open');
+      assert.ok(postil.threads().some((x) => x.id === t.id), 'the reopened thread is visible');
+
+      // Reopening an archived thread by hand brings it back too, with its snapshots pinned again.
+      await postil.unresolveThread(other.id);
+      assert.ok(postil.threads().some((x) => x.id === other.id));
+      assert.equal(postil.archivedThreads().length, 0);
+      const pinned = await postil.repo.pinnedTrees();
+      assert.ok(pinned.includes(other.from_tree) && pinned.includes(other.to_tree));
+      postil.close();
+    } finally {
+      fx.cleanup();
+    }
+  });
+
+  it('pins a chosen base commit, and degrades with a warning if it disappears anyway', async () => {
+    const fx = makeFixture();
+    try {
+      fx.write('a', '1\n');
+      fx.commit('root');
+      fx.git('switch', '-q', '-c', 'topic');
+      fx.write('a', '2\n');
+      const topic = fx.commit('topic work');
+      fx.git('switch', '-q', 'main');
+      const postil = await Postil.open(fx.dir);
+      await postil.setBase('topic');
+      fx.git('branch', '-q', '-D', 'topic');
+      fx.git('reflog', 'expire', '--expire=now', '--all');
+      fx.git('gc', '--prune=now', '-q');
+      assert.equal((await postil.base()).commit, topic, 'the pin kept it alive through gc');
+
+      // A base stored by an older postil, unpinned and then lost:
+      postil.store.setSetting('base', JSON.stringify({ mode: 'commit', commit: 'f'.repeat(40) }));
+      const base = await postil.base();
+      assert.equal(base.commit, null);
+      assert.match(base.warning ?? '', /no longer exists/);
+      await postil.resolveScope({ kind: 'all' }); // views keep working
+      postil.close();
+    } finally {
+      fx.cleanup();
     }
   });
 });

@@ -237,9 +237,13 @@ export class Store {
     ).map(toThread);
   }
 
+  /** Reopening a thread also brings it back from the archive, since it is active again. */
   setThreadStatus(id: number, status: ThreadStatus): boolean {
     return this.run(
-      'UPDATE thread SET status = :status, resolved_at = CASE WHEN :status = \'resolved\' THEN :now ELSE NULL END WHERE id = :id AND status != :status',
+      `UPDATE thread SET status = :status,
+         resolved_at = CASE WHEN :status = 'resolved' THEN :now ELSE NULL END,
+         archived_at = CASE WHEN :status = 'open' THEN NULL ELSE archived_at END
+       WHERE id = :id AND status != :status`,
       { id, status, now: nowIso() },
     ).changes === 1;
   }
@@ -368,7 +372,13 @@ export class Store {
   archiveResolved(): { threads: number; reviews: number } {
     return this.tx(() => {
       const now = nowIso();
-      const threads = this.run("UPDATE thread SET archived_at = :now WHERE status = 'resolved' AND archived_at IS NULL", { now }).changes;
+      // A resolved thread with an unsent reply is still in play: submitting will reopen it.
+      const threads = this.run(
+        `UPDATE thread SET archived_at = :now
+         WHERE status = 'resolved' AND archived_at IS NULL
+           AND NOT EXISTS (SELECT 1 FROM comment WHERE comment.thread_id = thread.id AND comment.draft = 1)`,
+        { now },
+      ).changes;
       const reviews = this.run(
         `UPDATE review SET archived_at = :now
          WHERE status = 'addressed' AND archived_at IS NULL

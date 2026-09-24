@@ -261,6 +261,32 @@ describe('CLI lifecycle', () => {
   });
 });
 
+describe('review formatting and CLI options', () => {
+  it('explains apply_suggestion whenever a comment has a suggestion, whatever its fence', () => {
+    const out = formatReview({
+      id: 1, status: 'in_progress', body: '', submitted_at: null,
+      threads: [{
+        id: 2, path: 'a.ts', side: 'new', start_line: 1, end_line: 1, anchor_text: 'x', status: 'open',
+        needs_decision: false, awaiting_reply: true, anchor: { state: 'current', path: 'a.ts', start_line: 1, end_line: 1 },
+        comments: [{ id: 3, author: 'user', body: '~~~suggestion\ny\n~~~', created_at: '', in_this_review: true, suggestion: true, applied: false }],
+      }],
+    });
+    assert.match(out, /Apply it with apply_suggestion if you agree/);
+  });
+
+  it('rejects options that do not apply to the command, and conflicting base choices', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'postil-cli-'));
+    try {
+      for (const args of [['base', 'main', '--empty'], ['base', '--empty', '--reset'], ['start', '--empty'], ['status', '--port', '5']]) {
+        const r = await cli(args, { cwd: dir });
+        assert.equal(r.code, 2, args.join(' '));
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
 describe('review formatting', () => {
   it('fences anchored code so backticks inside it cannot escape', () => {
     const out = formatReview({

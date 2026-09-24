@@ -37,17 +37,29 @@ In a Claude Code session in the repository you want to review, run:
 /postil:review
 ```
 
-Claude starts the review server (if it is not already running), opens the UI, and starts listening. Review the diff, leave
-comments, and press **Submit review**. Claude picks the review up on its own, changes the code,
-replies to each comment, and marks the review complete. Reply again or resolve threads, submit
-again, and repeat until you are happy. The header shows whether Claude is listening.
+Claude starts the review server (if it is not already running), opens the UI, and starts
+listening. Review the diff, leave comments, and press **Submit review**. Claude picks the review
+up on its own, changes the code, replies to each comment, and marks the review complete. Reply
+again or resolve threads, submit again, and repeat until you are happy. The header shows whether
+Claude is listening.
 
 For hands-free rounds, Claude must be able to edit without asking: run the session in
-accept-edits or auto mode. Only the Claude session that ran `/postil:review` is affected by the
-plugin's hooks; other sessions in the same repository are left alone.
+accept-edits or auto mode. The plugin's hooks act only in the session that ran `/postil:review`;
+another session started in the same repository is just told, in one line, that a review server
+is running.
 
-Other commands: `postil status`, `postil open`, `postil stop`, `postil archive`, `postil doctor`,
-and `postil help`.
+By default "all changes" means the changes on your branch since it left `main`, or, on `main`
+itself, everything since postil was first used in the repository. `postil base <rev>` measures
+from another commit, and `postil base --empty` puts every file in the repository under review.
+The scope menu in the UI also offers uncommitted changes, changes since your last review, and any
+range of commits.
+
+postil keeps its state (reviews, comments, the server's address and token) in `.git/postil/`
+and pins the snapshots it needs under `refs/postil/`. It adds nothing to your working tree, and
+the server only listens on `127.0.0.1`.
+
+Other commands: `postil start`, `stop`, `status`, `open`, `url`, `base`, `archive`, `doctor`, and
+`help`.
 
 ## Status
 
@@ -75,7 +87,7 @@ Requires Node 24 and git 2.43 or newer. Node runs the TypeScript sources directl
 
 ```sh
 npm install
-npm run build                 # build the browser UI into web/dist
+npm run build                 # build the UI into web/dist, then bundle the plugin into plugin/dist
 npm run check                 # typecheck and run the unit and integration tests
 node src/cli/main.ts serve    # serve the repository you are in, from source
 node src/cli/main.ts open     # open the review UI in your browser
@@ -88,11 +100,14 @@ UI development with hot reload, against a running server:
 POSTIL_URL=http://127.0.0.1:<port> npm run dev:web
 ```
 
+Then open `http://localhost:5173/#token=<token>`, with the token from `postil url`.
+
 `node e2e/perf.ts` loads and scrolls a synthetic review (300 files; set `FILES=2000` for more)
 and reports load time, main-thread blocking and DOM size.
 
-Live tests run real Claude Code sessions with the plugin. They cost money and depend on the
-model, so they are run by hand: `node e2e/live/headless.ts` and `node e2e/live/interactive.ts`.
+Live tests run real Claude Code sessions with the plugin's bundle, so run `npm run build` first.
+They cost money and depend on the model, so they are run by hand: `node e2e/live/headless.ts`
+and `node e2e/live/interactive.ts` (the second needs tmux).
 
 Browser tests drive the built UI in headless Chromium. They need Playwright's browser and its
 system libraries once:

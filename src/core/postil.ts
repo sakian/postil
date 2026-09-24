@@ -103,9 +103,13 @@ export class Postil {
   }
 
   private async ensureBase(): Promise<void> {
-    if (this.store.getSetting('base') === null) {
-      this.store.setSetting('base', JSON.stringify(await this.defaultBase()));
-    }
+    if (this.store.getSetting('base') === null) await this.saveBase(await this.defaultBase());
+  }
+
+  /** Store the base, pinning a fixed commit so a rebase or gc cannot take it away. */
+  private async saveBase(config: BaseConfig): Promise<void> {
+    await this.repo.pinBase(config.mode === 'commit' ? config.commit : null);
+    this.store.setSetting('base', JSON.stringify(config));
   }
 
   private baseConfig(): BaseConfig {
@@ -117,7 +121,16 @@ export class Postil {
     const emptyTree = await this.repo.emptyTree();
     if (config.mode === 'commit') {
       if (config.commit === null) return { config, commit: null, tree: emptyTree, label: 'empty tree' };
-      return { config, commit: config.commit, tree: await this.repo.resolveTree(config.commit), label: short(config.commit) };
+      try {
+        return { config, commit: config.commit, tree: await this.repo.resolveTree(config.commit), label: short(config.commit) };
+      } catch (e) {
+        // Chosen before postil pinned bases, and since lost to gc. Degrade rather than break every view.
+        if (!(e instanceof HttpError && e.status === 404)) throw e;
+        return {
+          config, commit: null, tree: emptyTree, label: 'empty tree',
+          warning: `base commit ${short(config.commit)} no longer exists; choose another with \`postil base\``,
+        };
+      }
     }
     const head = await this.repo.head();
     const mergeBase = head ? await this.repo.mergeBase('HEAD', config.target).catch(() => null) : null;
@@ -133,15 +146,16 @@ export class Postil {
     };
   }
 
-  async setBase(rev: string): Promise<BaseInfo> {
-    const commit = await this.repo.resolveCommit(rev);
-    this.store.setSetting('base', JSON.stringify({ mode: 'commit', commit } satisfies BaseConfig));
+  /** Measure "all changes" from a commit, or from nothing (null), which reviews every file in the tree. */
+  async setBase(rev: string | null): Promise<BaseInfo> {
+    const commit = rev === null ? null : await this.repo.resolveCommit(rev);
+    await this.saveBase({ mode: 'commit', commit });
     this.bus.emit({ type: 'base.changed' });
     return this.base();
   }
 
   async resetBase(): Promise<BaseInfo> {
-    this.store.setSetting('base', JSON.stringify(await this.defaultBase()));
+    await this.saveBase(await this.defaultBase());
     this.bus.emit({ type: 'base.changed' });
     return this.base();
   }
@@ -625,10 +639,22 @@ export class Postil {
     return this.thread(id);
   }
 
-  unresolveThread(id: number): ThreadView {
+  async unresolveThread(id: number): Promise<ThreadView> {
     this.thread(id);
+    const row = this.store.getThread(id)!;
     if (this.store.setThreadStatus(id, 'open')) this.bus.emit({ type: 'thread.unresolved', thread_id: id });
+    if (row.archived_at) await this.repinThread(row);
     return this.thread(id);
+  }
+
+  /**
+   * Archiving released a thread's snapshots. When it becomes active again, pin them back if git
+   * still has them; if gc already took them, the thread still works and is anchored as best it can.
+   */
+  private async repinThread(row: ThreadRow): Promise<void> {
+    for (const tree of new Set([row.from_tree, row.to_tree])) {
+      if ((await this.repo.objectType(tree)) === 'tree') await this.pinTree(tree, 'anchor');
+    }
   }
 
   /**
@@ -645,6 +671,12 @@ export class Postil {
     if (!pending && finalBody.trim() === '') throw new HttpError(409, 'there is nothing to submit', 'empty_review');
 
     const tree = await this.snapshot('review_submitted');
+    // Threads this submission reopens from the archive need their snapshots pinned again.
+    const unarchiving = pending
+      ? [...new Set(this.store.commentsInReview(pending.id).filter((c) => c.draft).map((c) => c.thread_id))]
+          .map((id) => this.store.getThread(id))
+          .filter((t): t is ThreadRow => t !== null && t.archived_at !== null)
+      : [];
 
     const { reviewId, threadIds } = this.store.tx(() => {
       const draft = this.store.getDraftReview() ?? this.store.getOrCreateDraftReview();
@@ -660,6 +692,7 @@ export class Postil {
       return { reviewId: draft.id, threadIds: touched };
     });
 
+    for (const t of unarchiving) await this.repinThread(t);
     this.bus.emit(
       {
         type: 'review.submitted',

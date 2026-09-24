@@ -9,7 +9,7 @@ import { strict as assert } from 'node:assert';
 import { execFileSync } from 'node:child_process';
 import { makeDemoRepo } from '../fixture.ts';
 import type { ReviewView, ThreadView } from '../../src/core/api-types.ts';
-import { ALLOWED_TOOLS, api, childEnv, pathWithPostil, PLUGIN, postil, reviewAddressed, submitReview, waitFor } from './lib.ts';
+import { ALLOWED_TOOLS, api, childEnv, userPath, PLUGIN, postil, reviewAddressed, submitReview, waitFor } from './lib.ts';
 
 const TMUX = 'postil-live-test';
 const tmux = (...args: string[]) => execFileSync('tmux', args, { encoding: 'utf8' });
@@ -22,10 +22,10 @@ const listening = async (dir: string) => (await api<{ listening: number }>(dir, 
 const log = (m: string) => console.log(`[${new Date().toISOString().slice(11, 19)}] ${m}`);
 
 const fx = makeDemoRepo();
-const path = pathWithPostil();
+const path = userPath();
 const env = childEnv(path);
 try {
-  postil(fx.dir, path, 'start', '--port', '0');
+  postil(fx.dir, 'start', '--port', '0');
   // PATH goes into the command itself: tmux starts it through a shell whose startup files reset PATH.
   const cmd = ['env', `PATH=${path}`, 'claude', '--plugin-dir', PLUGIN, '--permission-mode', 'acceptEdits', '--allowedTools', ALLOWED_TOOLS.join(',')]
     .map((a) => `'${a.replace(/'/g, `'\\''`)}'`).join(' ');
@@ -74,10 +74,10 @@ try {
   log(`review #${r2} addressed ${Math.round((Date.now() - t0) / 1000)}s later`);
 
   // ---------------------------------------------------------------- server restart
-  postil(fx.dir, path, 'stop');
+  postil(fx.dir, 'stop');
   log('stopped the server; the monitor closes');
   await new Promise((r) => setTimeout(r, 3_000));
-  postil(fx.dir, path, 'start');
+  postil(fx.dir, 'start');
   log('restarted the server');
   t0 = Date.now();
   await waitFor('Claude to reconnect by itself', 5 * 60_000, async () => ((await listening(fx.dir)) > 0 ? true : null));
@@ -108,6 +108,6 @@ try {
   throw e;
 } finally {
   try { tmux('kill-session', '-t', TMUX); } catch { /* not running */ }
-  try { postil(fx.dir, path, 'stop'); } catch { /* not running */ }
+  try { postil(fx.dir, 'stop'); } catch { /* not running */ }
   fx.cleanup();
 }

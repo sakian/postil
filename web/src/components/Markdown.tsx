@@ -1,4 +1,6 @@
 import { Children, isValidElement, useEffect, useState, type ReactElement, type ReactNode } from 'react';
+import ReactMarkdown, { type Components } from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import { highlight, renderTokens, type Token } from '../highlight/index.tsx';
 
 /** A fenced code block, coloured once its tokens arrive from the worker. */
@@ -16,8 +18,6 @@ function Code({ source, lang }: { source: string; lang: string | undefined }) {
     </pre>
   );
 }
-import ReactMarkdown, { type Components } from 'react-markdown';
-import remarkGfm from 'remark-gfm';
 
 /** How a suggestion can be applied: ready, already done, or blocked with a reason. */
 export interface ApplyState {

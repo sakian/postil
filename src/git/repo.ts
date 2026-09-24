@@ -329,6 +329,13 @@ export class Repo {
     return out.split('\n').filter((l) => l !== '');
   }
 
+  /** Keep the commit chosen as the review base alive through rebases and gc; null releases it. */
+  async pinBase(commit: string | null): Promise<void> {
+    const ref = `${PIN_ROOT}${this.worktreeId}/base`;
+    if (commit === null) await git(this.root, ['update-ref', '-d', ref]);
+    else await git(this.root, ['update-ref', ref, assertOid(commit, 'commit id')]);
+  }
+
   async pinnedTrees(): Promise<string[]> {
     const out = await gitText(this.root, ['for-each-ref', '--format=%(objectname)', this.treePins]);
     return out.split('\n').filter((l) => l !== '');

@@ -134,9 +134,9 @@ function FileView({ file, threads }: { file: FileChange; threads: ThreadView[] }
   const sections = useStore((s) => s.sections);
   const progress = useMemo(() => {
     if (!ready || ready.hunks.length < 2) return null;
-    const marks = validMarks(sections, file.path);
+    const marks = validMarks(sections, file);
     return { done: ready.hunks.filter((h) => hunkDone(h, marks)).length, total: ready.hunks.length };
-  }, [ready, sections, file.path]);
+  }, [ready, sections, file]);
 
   let body: ReactNode = null;
   if (file.kind === 'binary' && IMAGE.test(file.path)) {

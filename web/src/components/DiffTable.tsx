@@ -4,7 +4,7 @@ import { normalize, type Range } from '../lib/ranges.ts';
 import { buildRows, EXPAND_STEP, foldDone, gaps, oldToNewInGaps, toSplit, type Row, type SplitRow } from '../lib/rows.ts';
 import { hunkDone, validMarks } from '../lib/sections.ts';
 import { isSelected, splitSelection, unifiedSelection, type Selection } from '../lib/selection.ts';
-import { currentLines, diffKey } from '../format.ts';
+import { currentLines, diffKey, sidePath } from '../format.ts';
 import { renderTokens, type Token } from '../highlight/index.tsx';
 import { useStore, type Target } from '../store.ts';
 import { Icon } from './icons.tsx';
@@ -34,7 +34,7 @@ export function DiffTable({ file, diff, threads }: Props) {
   const key = diffKey(file);
 
   // Hunks marked done fold to one line unless the user unfolded them this session.
-  const marks = useMemo(() => validMarks(sections, file.path), [sections, file.path]);
+  const marks = useMemo(() => validMarks(sections, file), [sections, file]);
   const done = useMemo(() => diff.hunks.map((h) => hunkDone(h, marks)), [diff, marks]);
   const folded = useMemo(
     () => new Set(done.flatMap((d, i) => (d && !unfoldedDone[`${key}#${i}`] ? [i] : []))),
@@ -106,7 +106,7 @@ export function DiffTable({ file, diff, threads }: Props) {
       split && side ? splitSelection(split, a, b, side) : unifiedSelection(rows, a, b),
     [rows, split],
   );
-  const toTarget = (sel: Selection | null): Target | null => (sel ? { path: file.path, ...sel } : null);
+  const toTarget = (sel: Selection | null): Target | null => (sel ? { path: file.path, sidePath: sidePath(file, sel.side), ...sel } : null);
 
   const onGutterDown = (e: MouseEvent, index: number, side: Side | null) => {
     if (e.button !== 0) return;

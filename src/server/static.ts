@@ -53,7 +53,13 @@ export function createStatic(webRoot: string) {
 
     /** Hashed build assets. Anything that normalises outside the assets directory is refused. */
     async asset(c: Context): Promise<Response> {
-      const rel = normalize(decodeURIComponent(c.req.path.slice('/assets/'.length)));
+      let decoded: string;
+      try {
+        decoded = decodeURIComponent(c.req.path.slice('/assets/'.length));
+      } catch {
+        return c.notFound(); // malformed percent-encoding is a bad path, not a server error
+      }
+      const rel = normalize(decoded);
       const file = join(assetsDir, rel);
       if (rel.startsWith('..') || !file.startsWith(assetsDir + sep)) return c.notFound();
       let body: Buffer;

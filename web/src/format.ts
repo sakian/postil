@@ -33,6 +33,14 @@ export function markKey(path: string, blob: string): string {
   return `${path}\u0000${blob}`;
 }
 
+/**
+ * A file's path on one side of the diff. A renamed file has different paths on its two sides,
+ * and the server looks each side up in its own tree.
+ */
+export function sidePath(f: Pick<FileChange, 'path' | 'old_path' | 'new_path'>, side: 'old' | 'new'): string {
+  return (side === 'old' ? f.old_path : f.new_path) ?? f.path;
+}
+
 /** The lines a thread covers now: its anchor in the current diff, else where it was written. */
 export function currentLines(t: Pick<ThreadView, 'start_line' | 'end_line' | 'anchor'>): { start: number | null; end: number | null } {
   if (t.anchor && t.anchor.state !== 'gone') return { start: t.anchor.start_line, end: t.anchor.end_line };

@@ -1,10 +1,17 @@
 import type { AnchoredSectionMark, Hunk, Side } from '../../../src/core/api-types.ts';
 
-/** Marks that still hold in the diff being viewed: their lines are unchanged, perhaps moved. */
-export function validMarks(marks: readonly AnchoredSectionMark[], path: string): AnchoredSectionMark[] {
-  return marks.filter(
-    (m) => (m.anchor.state === 'current' || m.anchor.state === 'moved') && m.anchor.path === path && m.anchor.start_line !== null,
-  );
+/**
+ * Marks that still hold for a file in the diff being viewed: their lines are unchanged, perhaps
+ * moved. Each side is matched by that side's path, which differs for a renamed file.
+ */
+export function validMarks(
+  marks: readonly AnchoredSectionMark[],
+  file: { path: string; old_path: string | null; new_path: string | null },
+): AnchoredSectionMark[] {
+  return marks.filter((m) => {
+    const path = (m.side === 'old' ? file.old_path : file.new_path) ?? file.path;
+    return (m.anchor.state === 'current' || m.anchor.state === 'moved') && m.anchor.path === path && m.anchor.start_line !== null;
+  });
 }
 
 function covered(marks: readonly AnchoredSectionMark[], side: Side, n: number): boolean {

@@ -53,7 +53,44 @@ function baseEnv(): Record<string, string> {
 
 const DEFAULT_MAX_BYTES = 512 * 1024 * 1024;
 
-export function git(cwd: string, args: readonly string[], opts: GitRunOptions = {}): Promise<Buffer> {
+/**
+ * At most this many git processes run at once. Anchoring every thread in a large review, or many
+ * diff requests at once, would otherwise start hundreds and exhaust process or file limits.
+ */
+const MAX_CONCURRENT_GIT = 16;
+let running = 0;
+const queued: Array<() => void> = [];
+
+function acquire(): Promise<void> {
+  if (running < MAX_CONCURRENT_GIT) {
+    running++;
+    return Promise.resolve();
+  }
+  return new Promise((resolve) => queued.push(resolve));
+}
+
+/** A finished process hands its slot straight to the next waiter, so the limit is never exceeded. */
+function release(): void {
+  const next = queued.shift();
+  if (next) next();
+  else running--;
+}
+
+/** Current load, for tests. */
+export function gitLoad(): { running: number; queued: number; limit: number } {
+  return { running, queued: queued.length, limit: MAX_CONCURRENT_GIT };
+}
+
+export async function git(cwd: string, args: readonly string[], opts: GitRunOptions = {}): Promise<Buffer> {
+  await acquire();
+  try {
+    return await runGit(cwd, args, opts);
+  } finally {
+    release();
+  }
+}
+
+function runGit(cwd: string, args: readonly string[], opts: GitRunOptions): Promise<Buffer> {
   const maxBytes = opts.maxBytes ?? DEFAULT_MAX_BYTES;
   return new Promise((resolve, reject) => {
     const child = spawn('git', args, {

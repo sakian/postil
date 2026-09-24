@@ -59,9 +59,9 @@ describe('serving the UI', () => {
   });
 
   it('refuses paths that escape the assets directory', async () => {
-    for (const path of ['/assets/../secret.txt', '/assets/%2e%2e/secret.txt', '/assets/..%2fsecret.txt', '/assets/missing.js']) {
+    for (const path of ['/assets/../secret.txt', '/assets/%2e%2e/secret.txt', '/assets/..%2fsecret.txt', '/assets/missing.js', '/assets/%E0%A4%A.js']) {
       const res = await rawGet(server.info.port, path);
-      assert.notEqual(res.status, 200, path);
+      assert.equal(res.status, 404, path);
       assert.doesNotMatch(res.body, /outside assets/, path);
     }
   });

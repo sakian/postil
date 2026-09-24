@@ -14,10 +14,10 @@ export const PLUGIN = join(ROOT, 'plugin');
 export const BUNDLE = join(PLUGIN, 'dist/postil.mjs');
 
 /**
- * The PATH the Claude session gets: the user's own, with no `postil` on it. The plugin must work
- * from its bundle alone.
+ * The PATH the Claude session gets: the user's own, deliberately with nothing of postil's added,
+ * because the plugin must work from its bundle alone.
  */
-export function pathWithPostil(): string {
+export function userPath(): string {
   return process.env.PATH ?? '';
 }
 
@@ -31,7 +31,7 @@ export function childEnv(path: string): Record<string, string> {
 }
 
 /** Run the plugin's own bundle, as the harness's stand-in for the user's terminal. */
-export function postil(cwd: string, _path: string, ...args: string[]): string {
+export function postil(cwd: string, ...args: string[]): string {
   return execFileSync(process.execPath, [BUNDLE, ...args], { cwd, encoding: 'utf8' });
 }
 

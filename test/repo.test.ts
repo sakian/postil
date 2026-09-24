@@ -273,3 +273,24 @@ describe('Repo pins across worktrees', () => {
     }
   });
 });
+
+describe('git process limit', () => {
+  it('never runs more than the limit at once, and completes every call', async () => {
+    const { gitLoad } = await import('../src/git/exec.ts');
+    const fx = makeFixture();
+    try {
+      fx.write('a', '1\n');
+      fx.commit('base');
+      const repo = await Repo.open(fx.dir);
+      let peak = 0;
+      const timer = setInterval(() => { peak = Math.max(peak, gitLoad().running); }, 1);
+      const results = await Promise.all(Array.from({ length: 80 }, () => repo.head()));
+      clearInterval(timer);
+      assert.equal(new Set(results).size, 1);
+      assert.ok(peak <= gitLoad().limit, `peak ${peak}`);
+      assert.deepEqual([gitLoad().running, gitLoad().queued], [0, 0], 'every slot was released');
+    } finally {
+      fx.cleanup();
+    }
+  });
+});

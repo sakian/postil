@@ -44,7 +44,7 @@ const scopeSchema = z.discriminatedUnion('kind', [
 ]);
 
 const schemas = {
-  setBase: z.object({ rev: z.string().min(1) }),
+  setBase: z.object({ rev: z.string().min(1).nullable() }),
   resolve: z.object({ scope: scopeSchema }),
   files: z.object({ from: oid, to: oid }),
   fileDiff: z.object({
@@ -212,7 +212,7 @@ export function createApp(postil: Postil, opts: AppOptions): Hono {
   app.post('/api/threads', async (c) => c.json(await postil.createThread(await json(c, schemas.newThread)), 201));
   app.post('/api/threads/:id/replies', async (c) => c.json(postil.replyAsUser(param(c, 'id'), (await json(c, schemas.body)).body), 201));
   app.post('/api/threads/:id/resolve', (c) => c.json(postil.resolveThread(param(c, 'id'))));
-  app.post('/api/threads/:id/unresolve', (c) => c.json(postil.unresolveThread(param(c, 'id'))));
+  app.post('/api/threads/:id/unresolve', async (c) => c.json(await postil.unresolveThread(param(c, 'id'))));
   app.patch('/api/comments/:id', async (c) => c.json(postil.editDraft(param(c, 'id'), (await json(c, schemas.body)).body)));
   app.delete('/api/comments/:id', (c) => c.json(postil.deleteDraft(param(c, 'id'))));
   app.post('/api/comments/:id/apply', async (c) => c.json(await postil.applySuggestion(param(c, 'id'))));

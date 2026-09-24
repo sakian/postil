@@ -19,11 +19,13 @@ Commands:
   status                   Show the running server, base, and reviews
   open                     Open the review UI in your browser
   url [--agent]            Print the browser URL, or Claude's event feed URL
-  base [<rev> | --reset]   Show the base that "all changes" is measured from, or change it
+  base [<rev> | --empty | --reset]
+                           Show the base that "all changes" is measured from, or change it.
+                           --empty reviews the whole tree, as if every file were new
   archive                  Archive resolved conversations and finished reviews, and release their snapshots
   doctor                   Check Node, git, the UI build, the Claude Code plugin, and the server
   link [--dir <d>] [--force]
-                           Put \`postil\` on your PATH (default ~/.local/bin) for the Claude Code plugin
+                           Put \`postil\` on your PATH (default ~/.local/bin) for use in your terminal
   mcp                      Run the MCP server the Claude Code plugin uses (stdio)
   hook <event>             Handle a Claude Code hook event (session-start, prompt, stop)
   help                     Show this help
@@ -35,6 +37,16 @@ Options:
 
 class UsageError extends Error {}
 
+const GLOBAL_OPTIONS = ['C', 'version', 'help'];
+const COMMAND_OPTIONS: Record<string, string[]> = {
+  serve: ['port'],
+  start: ['port'],
+  url: ['agent'],
+  base: ['empty', 'reset'],
+  link: ['dir', 'force'],
+  wait: ['timeout'],
+};
+
 async function main(argv: string[]): Promise<number> {
   const { values, positionals } = parseArgs({
     args: argv,
@@ -45,6 +57,7 @@ async function main(argv: string[]): Promise<number> {
       port: { type: 'string' },
       agent: { type: 'boolean' },
       reset: { type: 'boolean' },
+      empty: { type: 'boolean' },
       dir: { type: 'string' },
       timeout: { type: 'string' },
       force: { type: 'boolean' },
@@ -54,6 +67,12 @@ async function main(argv: string[]): Promise<number> {
   });
   const cwd = resolve(values.C ?? process.cwd());
   const [command = 'help', ...rest] = positionals;
+
+  // Options are parsed globally but each belongs to particular commands; anything else is a mistake.
+  for (const [option, value] of Object.entries(values)) {
+    if (value === undefined || GLOBAL_OPTIONS.includes(option)) continue;
+    if (!(COMMAND_OPTIONS[command] ?? []).includes(option)) throw new UsageError(`--${option} does not apply to ${command}`);
+  }
 
   if (values.version) {
     console.log(VERSION);
@@ -121,7 +140,10 @@ async function main(argv: string[]): Promise<number> {
       return 0;
     }
     case 'base':
-      return base(cwd, rest[0], values.reset ?? false);
+      if ([rest[0] !== undefined, values.empty, values.reset].filter(Boolean).length > 1) {
+        throw new UsageError('give one of a revision, --empty or --reset');
+      }
+      return base(cwd, values.empty ? null : rest[0], values.reset ?? false);
     case 'doctor':
       return (await import('./doctor.ts')).doctor(cwd);
     case 'archive': {
@@ -194,14 +216,15 @@ async function status(cwd: string): Promise<number> {
   return 0;
 }
 
-async function base(cwd: string, rev: string | undefined, reset: boolean): Promise<number> {
-  if (rev && reset) throw new UsageError('give a revision or --reset, not both');
+/** `rev` null means --empty; undefined means show the current base. */
+async function base(cwd: string, rev: string | null | undefined, reset: boolean): Promise<number> {
+  if (rev !== undefined && reset) throw new UsageError('give a revision, --empty or --reset, not two of them');
   let info: BaseInfo;
   try {
     const client = await PostilClient.connect(cwd);
     info = reset
       ? await client.request<BaseInfo>('POST', '/api/base/reset')
-      : rev
+      : rev !== undefined
         ? await client.request<BaseInfo>('PUT', '/api/base', { rev })
         : await client.request<BaseInfo>('GET', '/api/base');
   } catch (e) {
@@ -209,7 +232,7 @@ async function base(cwd: string, rev: string | undefined, reset: boolean): Promi
     const { Postil } = await import('../core/postil.ts');
     const postil = await Postil.open(cwd);
     try {
-      info = reset ? await postil.resetBase() : rev ? await postil.setBase(rev) : await postil.base();
+      info = reset ? await postil.resetBase() : rev !== undefined ? await postil.setBase(rev) : await postil.base();
     } finally {
       postil.close();
     }

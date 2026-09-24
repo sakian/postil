@@ -228,3 +228,45 @@ describe('section done', async () => {
     assert.equal(marksOverlapping(hunk, marks).length, 2);
   });
 });
+
+describe('review fixes: renamed files and saved state', async () => {
+  const { sidePath } = await import('../../web/src/format.ts');
+  const { validMarks } = await import('../../web/src/lib/sections.ts');
+  const { withExpanded, MAX_EXPANDED_BLOBS } = await import('../../web/src/lib/expanded.ts');
+  const renamed = { path: 'new.ts', old_path: 'old.ts', new_path: 'new.ts' };
+
+  it('uses each side\'s own path for a renamed file', () => {
+    assert.equal(sidePath(renamed, 'old'), 'old.ts');
+    assert.equal(sidePath(renamed, 'new'), 'new.ts');
+    assert.equal(sidePath({ path: 'gone.ts', old_path: 'gone.ts', new_path: null }, 'new'), 'gone.ts');
+  });
+
+  it('matches done marks on each side of a renamed file by that side\'s path', () => {
+    const mark = (side: 'old' | 'new', path: string) => ({
+      id: 1, path, from_blob: null, to_blob: null, side, start_line: 1, end_line: 1, content_hash: '', created_at: '',
+      anchor: { state: 'current' as const, path, start_line: 1, end_line: 1 },
+    });
+    assert.equal(validMarks([mark('old', 'old.ts'), mark('new', 'new.ts')], renamed).length, 2);
+    assert.equal(validMarks([mark('old', 'new.ts')], renamed).length, 0, 'an old-side mark under the new name is not this file');
+  });
+
+  it('remembers expansion for only the most recent file versions', () => {
+    let state: Record<string, Array<readonly [number, number]>> = {};
+    for (let i = 0; i < MAX_EXPANDED_BLOBS + 50; i++) state = withExpanded(state, `blob${i}`, [[1, 2]]);
+    const keys = Object.keys(state);
+    assert.equal(keys.length, MAX_EXPANDED_BLOBS);
+    assert.equal(keys.at(-1), `blob${MAX_EXPANDED_BLOBS + 49}`);
+    assert.equal(state.blob0, undefined, 'the oldest was dropped');
+    state = withExpanded(state, 'blob60', [[5, 6]]);
+    assert.equal(Object.keys(state).at(-1), 'blob60', 'touching a version makes it the most recent');
+  });
+
+  it('builds a large tree quickly', async () => {
+    const { buildTree, flatten } = await import('../../web/src/lib/tree.ts');
+    const files = Array.from({ length: 20_000 }, (_, i) => ({ path: `src/d${i % 50}/f${i}.ts` }));
+    const t0 = performance.now();
+    const flat = flatten(buildTree(files), new Set());
+    assert.equal(flat.filter((n) => n.node.type === 'file').length, 20_000);
+    assert.ok(performance.now() - t0 < 2000, `took ${Math.round(performance.now() - t0)}ms`);
+  });
+});

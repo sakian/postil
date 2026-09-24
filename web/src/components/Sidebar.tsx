@@ -1,5 +1,5 @@
 import { useMemo } from 'react';
-import { markKey, viewedBlob } from '../format.ts';
+import { markKey, threadFile, viewedBlob } from '../format.ts';
 import { buildTree, dirPaths, flatten } from '../lib/tree.ts';
 import { useStore } from '../store.ts';
 import { StatusBadge } from './DiffPane.tsx';
@@ -17,12 +17,18 @@ export function Sidebar() {
   const collapsed = useMemo(() => new Set(collapsedDirs), [collapsedDirs]);
   const rows = useMemo(() => flatten(tree, collapsed), [tree, collapsed]);
   const updated = useStore((s) => (s.scope.kind === 'since_review' ? null : s.resolved?.since_review ?? null));
-  const updatedPaths = useMemo(() => new Set(updated?.changed ?? []), [updated]);
+  const updatedPaths = useStore((s) => s.updatedPaths);
+  // Count each open conversation against the file it shows in now, following renames, exactly as
+  // the diff pane places it.
   const openByPath = useMemo(() => {
     const m = new Map<string, number>();
-    for (const t of threads) if (t.status === 'open') m.set(t.path, (m.get(t.path) ?? 0) + 1);
+    for (const t of threads) {
+      if (t.status !== 'open' || !resolved) continue;
+      const f = threadFile(t, resolved.files);
+      if (f) m.set(f.path, (m.get(f.path) ?? 0) + 1);
+    }
     return m;
-  }, [threads]);
+  }, [threads, resolved]);
 
   const files = resolved?.files ?? [];
   const viewedCount = files.filter((f) => {
@@ -67,7 +73,7 @@ export function Sidebar() {
               onClick={() => revealFile(f.path)} title={f.path}>
               <StatusBadge file={f} />
               <span className="tree-name">{node.name}</span>
-              {updatedPaths.has(f.path) && <span className="tree-updated" title={`Changed since you submitted review #${updated?.review_id}`} />}
+              {updated && updatedPaths.has(f.path) && <span className="tree-updated" title={`Changed since you submitted review #${updated?.review_id}`} />}
               {open > 0 && <span className="tree-badge" title={`${open} open conversation(s)`}>{open}</span>}
               {isViewed && <Icon name="check" size={14} title="Viewed" />}
             </button>

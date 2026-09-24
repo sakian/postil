@@ -3,8 +3,9 @@ import type {
   AnchoredSectionMark, BaseInfo, CommitsInfo, FileChange, Hunk, FileDiff, Health, ResolvedDiff, ReviewView, Scope, Side, ThreadView,
 } from '../../src/core/api-types.ts';
 import { api, ApiError } from './api.ts';
-import { diffKey, markKey, viewedBlob } from './format.ts';
+import { diffKey, markKey, sidePath, viewedBlob } from './format.ts';
 import { highlight, MAX_HIGHLIGHT_LINES, type Token } from './highlight/index.tsx';
+import { withExpanded } from './lib/expanded.ts';
 import { add, removeOverlapping, type Range } from './lib/ranges.ts';
 import { hunkDone, hunkRanges, marksOverlapping, validMarks } from './lib/sections.ts';
 
@@ -12,7 +13,10 @@ export type ViewMode = 'unified' | 'split';
 export type Panel = 'threads' | 'review' | null;
 
 export interface Target {
+  /** The file as the page shows it (its current path); used to match UI state to a file. */
   path: string;
+  /** The file's path on `side`, which is what the server needs; differs for a renamed file. */
+  sidePath?: string;
   side: Side;
   start: number;
   end: number;
@@ -142,6 +146,9 @@ function errorText(e: unknown): string {
 }
 
 let toastId = 0;
+let refreshTicket = 0;
+
+
 
 const inflight = new Map<string, Promise<unknown>>();
 /**
@@ -241,9 +248,13 @@ export const useStore = create<Store>()((set, get) => {
     },
 
     async refresh() {
+      // Only the newest refresh may land: a slow answer for a scope the user has since left must
+      // not overwrite the diff they switched to.
+      const ticket = ++refreshTicket;
       set({ resolving: true, resolveError: null });
       try {
         const [resolved, base] = await Promise.all([api.resolve(get().scope), api.base()]);
+        if (ticket !== refreshTicket) return;
         set({ resolved, base, stale: false, updatedPaths: new Set(resolved.since_review?.changed ?? []) });
         // Thread and "done" positions depend on the diff, so re-anchor them to the new one.
         await Promise.all([get().refreshThreads(), get().refreshSections()]);
@@ -254,10 +265,11 @@ export const useStore = create<Store>()((set, get) => {
           persist(PERSISTED.scope, { kind: 'all' });
           return get().refresh();
         }
+        if (ticket !== refreshTicket) return;
         if (e instanceof ApiError && e.status === 401) set({ authFailed: true });
         set({ resolveError: errorText(e) });
       } finally {
-        set({ resolving: false });
+        if (ticket === refreshTicket) set({ resolving: false });
       }
     },
 
@@ -302,16 +314,18 @@ export const useStore = create<Store>()((set, get) => {
       try {
         if (done) {
           for (const r of hunkRanges(hunk)) {
-            await api.addSectionMark({ path: file.path, from_blob: file.old_blob, to_blob: file.new_blob, side: r.side, start_line: r.start, end_line: r.end });
+            await api.addSectionMark({
+              path: sidePath(file, r.side), from_blob: file.old_blob, to_blob: file.new_blob, side: r.side, start_line: r.start, end_line: r.end,
+            });
           }
         } else {
-          for (const m of marksOverlapping(hunk, validMarks(get().sections, file.path))) await api.removeSectionMark(m.id);
+          for (const m of marksOverlapping(hunk, validMarks(get().sections, file))) await api.removeSectionMark(m.id);
         }
         await get().refreshSections();
         // Finishing the last section finishes the file.
         const diff = get().diffs[diffKey(file)];
         if (done && diff?.state === 'ready') {
-          const marks = validMarks(get().sections, file.path);
+          const marks = validMarks(get().sections, file);
           if (diff.value.hunks.every((h) => hunkDone(h, marks))) await get().setViewed(file, true);
         }
       } catch (e) {
@@ -424,7 +438,7 @@ export const useStore = create<Store>()((set, get) => {
       if (!blob || diff?.state !== 'ready' || diff.value.new_lines === null) return;
       await get().loadLines(blob, diff.value.new_lines);
       set((s) => {
-        const expanded = { ...s.expanded, [blob]: add(s.expanded[blob] ?? [], range) };
+        const expanded = withExpanded(s.expanded, blob, add(s.expanded[blob] ?? [], range));
         persist(PERSISTED.expanded, expanded);
         return { expanded };
       });
@@ -504,7 +518,7 @@ export const useStore = create<Store>()((set, get) => {
       try {
         await api.createThread({
           from_tree: resolved.from.tree, to_tree: resolved.to.tree,
-          path: target.path, side: target.side, start_line: target.start, end_line: target.end, body,
+          path: target.sidePath ?? target.path, side: target.side, start_line: target.start, end_line: target.end, body,
         });
         set({ composer: null, selection: null });
         await Promise.all([get().refreshThreads(), get().refreshReviews()]);

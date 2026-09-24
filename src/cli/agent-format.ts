@@ -62,7 +62,7 @@ export function formatReview(r: AgentReview): string {
   if (r.body.trim()) out.push('', 'Overall comment from the user:', indent(r.body));
   out.push('', `${needs.length} of ${r.threads.length} thread(s) need your reply.`);
   for (const t of r.threads) out.push('', formatThread(t));
-  const suggestions = r.threads.some((t) => t.comments.some((c) => c.body.includes('```suggestion')));
+  const suggestions = r.threads.some((t) => t.comments.some((c) => c.suggestion));
   out.push(
     '',
     '---',
