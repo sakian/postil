@@ -52,9 +52,12 @@ accept-edits or auto mode. The plugin's hooks act only in the session that ran `
 another session started in the same repository is just told, in one line, that a review server
 is running.
 
-By default "all changes" means the changes on your branch since it left `main`, or, on `main`
-itself, everything since postil was first used in the repository. `postil base <rev>` measures
-from another commit, and `postil base --empty` puts every file in the repository under review.
+By default "all changes" means the changes on your branch since it left the branch its pull
+request targets (asked of `gh`, when it is installed) or else `main`, or, on `main` itself,
+everything since postil was first used in the repository. `postil base --branch <b>` measures
+from where your branch left `<b>`, following it as a pull request would; `postil base <rev>`
+measures from a fixed commit; `postil base --empty` puts every file in the repository under
+review; and `postil base --reset` goes back to the default.
 The scope menu in the UI also offers uncommitted changes, changes since your last review, and any
 range of commits.
 

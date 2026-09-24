@@ -19,8 +19,11 @@ Commands:
   status                   Show the running server, base, and reviews
   open                     Open the review UI in your browser
   url [--agent]            Print the browser URL, or Claude's event feed URL
-  base [<rev> | --empty | --reset]
+  base [<rev> | --branch <b> | --empty | --reset]
                            Show the base that "all changes" is measured from, or change it.
+                           --branch measures from the merge base with <b>, following it like a
+                           pull request; --reset goes back to the default (the pull request's
+                           base branch, per gh, or the default branch)
                            --empty reviews the whole tree, as if every file were new
   archive                  Archive resolved conversations and finished reviews, and release their snapshots
   doctor                   Check Node, git, the UI build, the Claude Code plugin, and the server
@@ -42,7 +45,7 @@ const COMMAND_OPTIONS: Record<string, string[]> = {
   serve: ['port'],
   start: ['port'],
   url: ['agent'],
-  base: ['empty', 'reset'],
+  base: ['branch', 'empty', 'reset'],
   link: ['dir', 'force'],
   wait: ['timeout'],
 };
@@ -57,6 +60,7 @@ async function main(argv: string[]): Promise<number> {
       port: { type: 'string' },
       agent: { type: 'boolean' },
       reset: { type: 'boolean' },
+      branch: { type: 'string' },
       empty: { type: 'boolean' },
       dir: { type: 'string' },
       timeout: { type: 'string' },
@@ -140,10 +144,17 @@ async function main(argv: string[]): Promise<number> {
       return 0;
     }
     case 'base':
-      if ([rest[0] !== undefined, values.empty, values.reset].filter(Boolean).length > 1) {
-        throw new UsageError('give one of a revision, --empty or --reset');
+      if ([rest[0] !== undefined, values.branch !== undefined, values.empty, values.reset].filter(Boolean).length > 1) {
+        throw new UsageError('give one of a revision, --branch, --empty or --reset');
       }
-      return base(cwd, values.empty ? null : rest[0], values.reset ?? false);
+      return base(
+        cwd,
+        values.reset ? 'reset'
+          : values.branch !== undefined ? { branch: values.branch }
+          : values.empty ? { rev: null }
+          : rest[0] !== undefined ? { rev: rest[0] }
+          : null,
+      );
     case 'doctor':
       return (await import('./doctor.ts')).doctor(cwd);
     case 'archive': {
@@ -216,23 +227,27 @@ async function status(cwd: string): Promise<number> {
   return 0;
 }
 
-/** `rev` null means --empty; undefined means show the current base. */
-async function base(cwd: string, rev: string | null | undefined, reset: boolean): Promise<number> {
-  if (rev !== undefined && reset) throw new UsageError('give a revision, --empty or --reset, not two of them');
+/** A base to set (`rev` null means --empty), 'reset' for the default, or null to show the current one. */
+type BaseChange = { rev: string | null } | { branch: string } | 'reset' | null;
+
+async function base(cwd: string, change: BaseChange): Promise<number> {
   let info: BaseInfo;
   try {
     const client = await PostilClient.connect(cwd);
-    info = reset
+    info = change === 'reset'
       ? await client.request<BaseInfo>('POST', '/api/base/reset')
-      : rev !== undefined
-        ? await client.request<BaseInfo>('PUT', '/api/base', { rev })
+      : change
+        ? await client.request<BaseInfo>('PUT', '/api/base', change)
         : await client.request<BaseInfo>('GET', '/api/base');
   } catch (e) {
     if (!(e instanceof NotRunningError)) throw e;
     const { Postil } = await import('../core/postil.ts');
     const postil = await Postil.open(cwd);
     try {
-      info = reset ? await postil.resetBase() : rev !== undefined ? await postil.setBase(rev) : await postil.base();
+      info = change === 'reset' ? await postil.resetBase()
+        : change === null ? await postil.base()
+        : 'branch' in change ? await postil.setBaseBranch(change.branch)
+        : await postil.setBase(change.rev);
     } finally {
       postil.close();
     }

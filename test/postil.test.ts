@@ -76,6 +76,41 @@ describe('base selection', () => {
     }
   });
 
+  it('measures a stacked branch from the branch it targets, following that branch as it moves', async () => {
+    const fx = makeFixture();
+    try {
+      fx.write('a', '1\n');
+      fx.commit('root');
+      fx.git('switch', '-q', '-c', 'develop');
+      fx.write('b', 'develop\n');
+      const dev1 = fx.commit('develop work');
+      fx.git('switch', '-q', '-c', 'feature');
+      fx.write('c', 'feature\n');
+      fx.commit('feature work');
+      const postil = await Postil.open(fx.dir);
+
+      let base = await postil.setBaseBranch('develop');
+      assert.deepEqual(base.config, { mode: 'merge-base', target: 'develop' });
+      assert.equal(base.commit, dev1);
+      const all = await postil.resolveScope({ kind: 'all' });
+      assert.deepEqual((await postil.files(all.from.tree, all.to.tree)).map((f) => f.path), ['c'], 'only the feature diff');
+
+      // develop moves on and feature merges it in: the base follows, as a pull request's does.
+      fx.git('switch', '-q', 'develop');
+      fx.write('b', 'develop 2\n');
+      const dev2 = fx.commit('more develop work');
+      fx.git('switch', '-q', 'feature');
+      fx.git('merge', '-q', '--no-edit', 'develop');
+      base = await postil.base();
+      assert.equal(base.commit, dev2);
+
+      await assert.rejects(postil.setBaseBranch('nope'), /no branch named "nope"/);
+      postil.close();
+    } finally {
+      fx.cleanup();
+    }
+  });
+
   it('falls back to the empty tree in a repository with no commits', async () => {
     const fx = makeFixture();
     try {

@@ -90,16 +90,19 @@ export class Postil {
   // ------------------------------------------------------------------ base
 
   /**
-   * On a feature branch, the base follows the merge base with the default branch, as a
-   * pull request would. Anywhere else, it is HEAD when postil first ran here, so "all
-   * changes" means everything since review began.
+   * On a feature branch, the base follows the merge base with the branch its pull request
+   * targets (per the GitHub CLI), or else the default branch, as a pull request would.
+   * Anywhere else, it is HEAD when postil first ran here, so "all changes" means everything
+   * since review began.
    */
   private async defaultBase(): Promise<BaseConfig> {
-    const [branch, target, head] = await Promise.all([
+    const [branch, fallback, head] = await Promise.all([
       this.repo.currentBranch(), this.repo.defaultBranch(), this.repo.head(),
     ]);
-    if (branch && target && branch !== target && head) return { mode: 'merge-base', target };
-    return { mode: 'commit', commit: head };
+    if (!branch || !head || branch === fallback) return { mode: 'commit', commit: head };
+    const prBase = await this.repo.pullRequestBase();
+    const target = (prBase && (await this.repo.findBranch(prBase))) ?? fallback;
+    return target && target !== branch ? { mode: 'merge-base', target } : { mode: 'commit', commit: head };
   }
 
   private async ensureBase(): Promise<void> {
@@ -150,6 +153,15 @@ export class Postil {
   async setBase(rev: string | null): Promise<BaseInfo> {
     const commit = rev === null ? null : await this.repo.resolveCommit(rev);
     await this.saveBase({ mode: 'commit', commit });
+    this.bus.emit({ type: 'base.changed' });
+    return this.base();
+  }
+
+  /** Measure "all changes" from the merge base with a branch, following it as it moves, as a pull request does. */
+  async setBaseBranch(name: string): Promise<BaseInfo> {
+    const target = await this.repo.findBranch(name);
+    if (!target) throw new HttpError(404, `no branch named ${JSON.stringify(name)}`, 'unknown_branch');
+    await this.saveBase({ mode: 'merge-base', target });
     this.bus.emit({ type: 'base.changed' });
     return this.base();
   }

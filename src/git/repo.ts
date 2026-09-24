@@ -1,3 +1,4 @@
+import { execFile } from 'node:child_process';
 import { copyFile, mkdir, rm, stat } from 'node:fs/promises';
 import { basename, join, resolve as resolvePath } from 'node:path';
 import { ByteLru, HttpError, Mutex } from '../core/util.ts';
@@ -168,6 +169,31 @@ export class Repo {
       if (await this.refExists(ref)) return name;
     }
     return null;
+  }
+
+  /**
+   * A branch by name: local first, so unpushed commits on it stay out of a feature diff, then a
+   * remote-tracking branch as given (origin/dev), then origin's. Null when none exists.
+   */
+  async findBranch(name: string): Promise<string | null> {
+    if (await this.refExists(`refs/heads/${name}`)) return name;
+    if (await this.refExists(`refs/remotes/${name}`)) return name;
+    if (await this.refExists(`refs/remotes/origin/${name}`)) return `origin/${name}`;
+    return null;
+  }
+
+  /**
+   * The branch that the current branch's open pull request targets, asked of the GitHub CLI.
+   * Null when gh is missing, signed out, offline or slow, or there is no pull request.
+   */
+  pullRequestBase(): Promise<string | null> {
+    return new Promise((done) => {
+      execFile(
+        'gh', ['pr', 'view', '--json', 'baseRefName', '--jq', '.baseRefName'],
+        { cwd: this.root, timeout: 5000, windowsHide: true, encoding: 'utf8', env: { ...process.env, GH_PROMPT_DISABLED: '1' } },
+        (err, stdout) => done(err ? null : stdout.trim() || null),
+      );
+    });
   }
 
   private async refExists(ref: string): Promise<boolean> {

@@ -44,7 +44,7 @@ const scopeSchema = z.discriminatedUnion('kind', [
 ]);
 
 const schemas = {
-  setBase: z.object({ rev: z.string().min(1).nullable() }),
+  setBase: z.union([z.object({ rev: z.string().min(1).nullable() }), z.object({ branch: z.string().min(1) })]),
   resolve: z.object({ scope: scopeSchema }),
   files: z.object({ from: oid, to: oid }),
   fileDiff: z.object({
@@ -160,7 +160,10 @@ export function createApp(postil: Postil, opts: AppOptions): Hono {
     c.json({ ok: true, service: 'postil', version: VERSION, root: postil.repo.root, pid: process.pid, listening: postil.listeningCount() }),
   );
   app.get('/api/base', async (c) => c.json(await postil.base()));
-  app.put('/api/base', async (c) => c.json(await postil.setBase((await json(c, schemas.setBase)).rev)));
+  app.put('/api/base', async (c) => {
+    const body = await json(c, schemas.setBase);
+    return c.json(await ('branch' in body ? postil.setBaseBranch(body.branch) : postil.setBase(body.rev)));
+  });
   app.post('/api/base/reset', async (c) => c.json(await postil.resetBase()));
   app.get('/api/commits', async (c) => c.json(await postil.commits()));
 
