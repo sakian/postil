@@ -6,7 +6,7 @@
  * A reinstall is what makes Claude Code take a rebuilt plugin: `claude plugin update` keeps the
  * cached copy while the version number is unchanged.
  */
-import { execFileSync, spawnSync } from 'node:child_process';
+import { execSync, spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
@@ -16,7 +16,7 @@ if (claude('--version').error) {
   console.error('Claude Code (`claude`) is not on PATH. Install it first.');
   process.exit(1);
 }
-execFileSync('npm', ['run', 'build'], { cwd: root, stdio: 'inherit' });
+execSync('npm run build', { cwd: root, stdio: 'inherit' }); // through a shell: npm is npm.cmd on Windows
 
 const listed = claude('plugin', 'marketplace', 'list').stdout ?? '';
 const step = listed.includes('postil')

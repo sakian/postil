@@ -11,12 +11,13 @@ import { strict as assert } from 'node:assert';
 import { mkdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { after, before, describe, it } from 'node:test';
+import { fileURLToPath } from 'node:url';
 import { chromium, type Browser, type Locator, type Page } from 'playwright';
 import { startServer, type RunningServer } from '../src/server/server.ts';
 import type { Fixture } from '../test/helpers.ts';
 import { makeDemoRepo } from './fixture.ts';
 
-const SHOTS = new URL('./screenshots/', import.meta.url).pathname;
+const SHOTS = fileURLToPath(new URL('./screenshots/', import.meta.url));
 
 const fileId = (path: string) => `[id="file-${encodeURIComponent(path).replace(/%/g, '_')}"]`;
 
@@ -150,7 +151,7 @@ describe('postil UI', { timeout: 120_000 }, () => {
     await composer.getByRole('button', { name: 'Preview' }).click();
     await composer.locator('.suggestion').waitFor();
     await composer.getByRole('button', { name: 'Add review comment' }).click();
-    const suggestion = retry.locator('.thread .suggestion');
+    const suggestion = retry.locator('.thread:not(.thread-new) .suggestion');
     await suggestion.waitFor();
     assert.equal(await suggestion.locator('tr.del').count(), 1);
     assert.match(await suggestion.locator('tr.add').innerText(), /default 100/);

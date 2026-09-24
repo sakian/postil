@@ -100,9 +100,10 @@ export class Repo {
       if (e instanceof GitError) throw new Error(`not inside a git working tree: ${cwd}`);
       throw e;
     }
-    const [root, gitDir, commonDir] = out.trim().split('\n');
+    const [root, gitDir, commonDir] = out.trim().split(/\r?\n/);
     if (!root || !gitDir || !commonDir) throw new Error(`could not locate the repository from ${cwd}`);
-    const repo = new Repo(root, gitDir, commonDir);
+    // Git for Windows reports C:/forward/slashes; resolve gives the native form Node's paths use.
+    const repo = new Repo(resolvePath(root), resolvePath(gitDir), resolvePath(commonDir));
     await mkdir(repo.stateDir, { recursive: true, mode: 0o700 });
     return repo;
   }

@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process';
-import { lstat, mkdir, open, readFile, readlink, realpath, symlink } from 'node:fs/promises';
+import { lstat, mkdir, open, readFile, readlink, realpath, symlink, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { delimiter, join, resolve } from 'node:path';
 import { CLI_ENTRY } from '../core/build-info.ts';
@@ -67,8 +67,9 @@ export async function stopDaemon(cwd: string): Promise<boolean> {
  * real path outside node_modules, where it is allowed to run TypeScript directly.
  */
 export async function linkBinary(dir = join(homedir(), '.local', 'bin'), force = false): Promise<{ path: string; onPath: boolean }> {
-  const target = resolve(dir, 'postil');
   await mkdir(dir, { recursive: true });
+  if (process.platform === 'win32') return linkShims(dir, force);
+  const target = resolve(dir, 'postil');
   const existing = await lstat(target).catch(() => null);
   if (existing) {
     const current = existing.isSymbolicLink() ? resolve(dir, await readlink(target)) : null;
@@ -83,9 +84,27 @@ export async function linkBinary(dir = join(homedir(), '.local', 'bin'), force =
   return { path: target, onPath: onPath(dir) };
 }
 
+/**
+ * Windows needs admin rights or developer mode for symlinks, and would not run a symlinked .ts
+ * file anyway, so it gets two small launchers instead: postil.cmd for cmd and PowerShell, and an
+ * extensionless sh script for Git Bash. Both run the checkout through node, so they stay current.
+ */
+async function linkShims(dir: string, force: boolean): Promise<{ path: string; onPath: boolean }> {
+  const shims: [string, string][] = [
+    [resolve(dir, 'postil.cmd'), `@node "${MAIN}" %*\r\n`],
+    [resolve(dir, 'postil'), `#!/bin/sh\nexec node "${MAIN.replace(/\\/g, '/')}" "$@"\n`],
+  ];
+  const current = await Promise.all(shims.map(([path]) => readFile(path, 'utf8').catch(() => null)));
+  const clobbers = shims.filter(([, content], i) => current[i] !== null && current[i] !== content);
+  if (clobbers.length && !force) throw new Error(`${clobbers[0]![0]} already exists; pass --force to replace it`);
+  for (const [path, content] of shims) await writeFile(path, content, { mode: 0o755 });
+  return { path: shims[0]![0], onPath: onPath(dir) };
+}
+
 function onPath(dir: string): boolean {
-  const want = resolve(dir);
-  return (process.env.PATH ?? '').split(delimiter).some((p) => p && resolve(p) === want);
+  const norm = (p: string) => (process.platform === 'win32' ? resolve(p).toLowerCase() : resolve(p));
+  const want = norm(dir);
+  return (process.env.PATH ?? '').split(delimiter).some((p) => p && norm(p) === want);
 }
 
 /** Open a URL in the user's browser. Resolves false when no browser could be launched. */
@@ -104,6 +123,12 @@ export function openBrowser(url: string): Promise<boolean> {
 
 /** The command a Monitor runs to be told when the server is back, with no reliance on PATH. */
 export function waitCommand(repoRoot: string): string {
+  if (process.platform === 'win32') {
+    // Claude may run this in Git Bash or PowerShell. A leading quoted path is only a string in
+    // PowerShell, and single quotes mean nothing to cmd, so use bare node and double quotes.
+    const q = (s: string) => `"${s.replace(/\\/g, '/')}"`;
+    return `node ${q(MAIN)} -C ${q(repoRoot)} wait`;
+  }
   const q = (s: string) => `'${s.replace(/'/g, `'\\''`)}'`;
   return `${q(process.execPath)} ${q(MAIN)} -C ${q(repoRoot)} wait`;
 }

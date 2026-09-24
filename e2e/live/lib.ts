@@ -3,6 +3,7 @@
  * They cost money and depend on the model, so they are run by hand, not by `npm test`.
  */
 import { execFileSync, spawn } from 'node:child_process';
+import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import type { ResolvedDiff, ReviewView, ThreadView } from '../../src/core/api-types.ts';
@@ -43,7 +44,7 @@ export async function api<T>(cwd: string, method: 'GET' | 'POST', route: string,
 export async function submitReview(cwd: string, body: string, comments: Array<{ path: string; line: string; text: string }>): Promise<number> {
   const diff = await api<ResolvedDiff>(cwd, 'POST', '/api/diff/resolve', { scope: { kind: 'all' } });
   for (const c of comments) {
-    const content = execFileSync('cat', [join(cwd, c.path)], { encoding: 'utf8' }).split('\n');
+    const content = readFileSync(join(cwd, c.path), 'utf8').split('\n');
     const index = content.findIndex((l) => l.includes(c.line));
     if (index < 0) throw new Error(`no line containing ${JSON.stringify(c.line)} in ${c.path}`);
     await api<ThreadView>(cwd, 'POST', '/api/threads', {

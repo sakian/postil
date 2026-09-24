@@ -1,6 +1,6 @@
 import { strict as assert } from 'node:assert';
-import { spawn } from 'node:child_process';
-import { existsSync, lstatSync, mkdtempSync, readlinkSync, rmSync } from 'node:fs';
+import { spawn, spawnSync } from 'node:child_process';
+import { existsSync, lstatSync, mkdtempSync, readFileSync, readlinkSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -249,12 +249,24 @@ describe('CLI lifecycle', () => {
     try {
       const r = await cli(['link', '--dir', dir], { cwd: dir });
       assert.equal(r.code, 0, r.stderr);
-      assert.ok(lstatSync(join(dir, 'postil')).isSymbolicLink());
-      assert.equal(readlinkSync(join(dir, 'postil')), MAIN);
+      if (process.platform === 'win32') {
+        assert.match(readFileSync(join(dir, 'postil.cmd'), 'utf8'), /^@node ".+main\.ts" %\*/);
+        assert.match(readFileSync(join(dir, 'postil'), 'utf8'), /^#!\/bin\/sh\nexec node ".+\/main\.ts" "\$@"/);
+      } else {
+        assert.ok(lstatSync(join(dir, 'postil')).isSymbolicLink());
+        assert.equal(readlinkSync(join(dir, 'postil')), MAIN);
+      }
       assert.equal((await cli(['link', '--dir', dir], { cwd: dir })).code, 0, 'relinking is a no-op');
       assert.ok(existsSync(join(dir, 'postil')));
-      const version = await cli(['--version'], { cwd: dir, env: { PATH: `${dir}:${process.env.PATH}` } });
-      assert.equal(version.code, 0);
+      if (process.platform === 'win32') {
+        const shim = spawnSync(join(dir, 'postil.cmd'), ['--version'], { encoding: 'utf8', shell: true });
+        assert.equal(shim.status, 0, shim.stderr);
+        writeFileSync(join(dir, 'postil'), 'someone else\n');
+        assert.equal((await cli(['link', '--dir', dir], { cwd: dir })).code, 1, 'does not clobber another file');
+      } else {
+        const version = await cli(['--version'], { cwd: dir, env: { PATH: `${dir}:${process.env.PATH}` } });
+        assert.equal(version.code, 0);
+      }
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
@@ -315,7 +327,7 @@ describe('several repositories at once', () => {
     const mcpA = new Client({ name: 'test', version: '0' });
     try {
       assert.notEqual(sa.info.port, sb.info.port);
-      assert.match((await cli(['status'], { cwd: join(b.dir) })).stdout, new RegExp(`serving ${b.dir}`));
+      assert.ok((await cli(['status'], { cwd: join(b.dir) })).stdout.includes(`serving ${b.dir} `));
 
       await mcpA.connect(new StdioClientTransport({
         command: process.execPath, args: [MAIN, 'mcp'], cwd: a.dir,

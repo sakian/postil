@@ -23,8 +23,12 @@ nothing needs to be on your PATH. For the `postil` command in your own terminal 
 `open`, `doctor` and so on), link it once:
 
 ```sh
-node plugin/dist/postil.mjs link   # symlinks postil into ~/.local/bin
+node plugin/dist/postil.mjs link   # puts postil in ~/.local/bin
 ```
+
+On Windows, `link` writes two small launchers instead of a symlink: `postil.cmd` for cmd and
+PowerShell, and `postil` for Git Bash. The Claude Code installer usually puts `~\.local\bin` on
+your PATH already.
 
 After pulling changes, run `npm run install-plugin` again: Claude Code only picks up a rebuilt
 plugin on reinstall. `postil doctor` checks the whole setup.
@@ -107,7 +111,7 @@ and reports load time, main-thread blocking and DOM size.
 
 Live tests run real Claude Code sessions with the plugin's bundle, so run `npm run build` first.
 They cost money and depend on the model, so they are run by hand: `node e2e/live/headless.ts`
-and `node e2e/live/interactive.ts` (the second needs tmux).
+and `node e2e/live/interactive.ts` (the second needs tmux, so it does not run on Windows).
 
 Browser tests drive the built UI in headless Chromium. They need Playwright's browser and its
 system libraries once:

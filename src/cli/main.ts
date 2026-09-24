@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { resolve } from 'node:path';
+import { dirname, resolve } from 'node:path';
 import { parseArgs } from 'node:util';
 import { ApiError, NotRunningError, PostilClient } from '../core/client.ts';
 import { AlreadyRunningError } from '../core/discovery.ts';
@@ -122,7 +122,7 @@ async function main(argv: string[]): Promise<number> {
       const { linkBinary } = await import('./daemon.ts');
       const { path, onPath } = await linkBinary(values.dir, values.force ?? false);
       console.log(`linked ${path}`);
-      if (!onPath) console.log(`note: ${path.replace(/\/postil$/, '')} is not on your PATH; add it so Claude Code can find postil`);
+      if (!onPath) console.log(`note: ${dirname(path)} is not on your PATH; add it so Claude Code can find postil`);
       return 0;
     }
     case 'mcp':
@@ -241,24 +241,35 @@ async function base(cwd: string, rev: string | null | undefined, reset: boolean)
   return 0;
 }
 
+/**
+ * Exit by letting the event loop drain rather than calling process.exit directly: on Windows,
+ * process.exit right after fetch reuses a keep-alive connection trips a libuv assertion
+ * (UV_HANDLE_CLOSING in async.c) and the process dies with 0xC0000409. The unref'd timer still
+ * forces the exit if a command leaves a handle open.
+ */
+function finish(code: number): void {
+  process.exitCode = code;
+  setTimeout(() => process.exit(code), 2000).unref();
+}
+
 main(process.argv.slice(2)).then(
-  (code) => process.exit(code),
+  (code) => finish(code),
   (e: unknown) => {
     if (e instanceof UsageError) {
       console.error(`postil: ${e.message}\n`);
       process.stderr.write(USAGE);
-      process.exit(2);
+      return finish(2);
     }
     if (e instanceof NotRunningError || e instanceof AlreadyRunningError || e instanceof ApiError) {
       console.error(`postil: ${e.message}`);
-      process.exit(1);
+      return finish(1);
     }
     if (e instanceof Error && 'code' in e && (e as NodeJS.ErrnoException).code === 'ERR_PARSE_ARGS_UNKNOWN_OPTION') {
       console.error(`postil: ${e.message}\n`);
       process.stderr.write(USAGE);
-      process.exit(2);
+      return finish(2);
     }
     console.error('postil:', e instanceof Error ? e.message : e);
-    process.exit(1);
+    finish(1);
   },
 );

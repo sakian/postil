@@ -5,6 +5,8 @@ import { after, before, describe, it } from 'node:test';
 import { Repo } from '../src/git/repo.ts';
 import { makeFixture, numbered, type Fixture } from './helpers.ts';
 
+const WINDOWS = process.platform === 'win32';
+
 describe('Repo.worktreeTree', () => {
   let fx: Fixture;
   let repo: Repo;
@@ -149,7 +151,8 @@ describe('Repo diffs', () => {
   it('lists every kind of change with counts', async () => {
     const files = await repo.diffFiles(base, await repo.worktreeTree());
     const byPath = new Map(files.map((f) => [f.path, f]));
-    assert.deepEqual([...byPath.keys()], ['add.txt', 'del.txt', 'img.bin', 'link', 'mod.txt', 'mv/new.ts', 'noeol.txt']);
+    const paths = ['add.txt', 'del.txt', 'img.bin', 'link', 'mod.txt', 'mv/new.ts', 'noeol.txt'];
+    assert.deepEqual([...byPath.keys()], WINDOWS ? [...paths, 'run.sh'] : paths);
     assert.equal(byPath.get('add.txt')?.status, 'added');
     assert.equal(byPath.get('del.txt')?.status, 'deleted');
     assert.equal(byPath.get('mod.txt')?.additions, 2);
@@ -164,9 +167,10 @@ describe('Repo diffs', () => {
   });
 
   it('does not report run.sh, because the private index snapshots the working tree, not the staged mode', async () => {
-    // update-index --chmod changes only the real index; the file on disk is still 644.
+    // update-index --chmod changes only the real index; the file on disk is still 644. Windows
+    // has no executable bit (core.fileMode is false), so there git keeps the staged mode.
     const files = await repo.diffFiles(base, await repo.worktreeTree());
-    assert.equal(files.some((f) => f.path === 'run.sh'), false);
+    assert.equal(files.some((f) => f.path === 'run.sh'), WINDOWS);
   });
 
   it('produces hunks between blobs with correct numbering and separate hunks for distant edits', async () => {
@@ -200,10 +204,11 @@ describe('Repo diffs', () => {
   });
 
   it('reads blob info and resolves entries by literal path', async () => {
-    fx.write('weird/*[x].ts', 'glob-looking name\n');
+    const weird = WINDOWS ? 'weird/[x].ts' : 'weird/*[x].ts'; // Windows file names cannot contain *
+    fx.write(weird, 'glob-looking name\n');
     fx.write('weird/a.ts', 'other\n');
     const tree = await repo.worktreeTree();
-    const entry = await repo.entryAt(tree, 'weird/*[x].ts');
+    const entry = await repo.entryAt(tree, weird);
     assert.equal(entry?.type, 'blob');
     const info = await repo.blobInfo(entry!.oid);
     assert.deepEqual([info.lines, info.binary], [1, false]);

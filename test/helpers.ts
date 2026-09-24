@@ -37,7 +37,16 @@ export function makeFixture(opts: { initialBranch?: string } = {}): Fixture {
       unlinkSync(join(dir, path));
     },
     symlink(target, path) {
-      symlinkSync(target, join(dir, path));
+      try {
+        symlinkSync(target, join(dir, path));
+      } catch (e) {
+        // Windows without developer mode: store it the way Git for Windows does with
+        // core.symlinks=false, as a file holding the target that the index records as a link.
+        if ((e as NodeJS.ErrnoException).code !== 'EPERM') throw e;
+        writeFileSync(join(dir, path), target);
+        const oid = run('hash-object', '-w', '--', path).trim();
+        run('update-index', '--add', '--cacheinfo', `120000,${oid},${path}`);
+      }
     },
     commit(message) {
       run('add', '-A');

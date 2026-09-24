@@ -113,7 +113,7 @@ describe('server', () => {
       ok.close();
     });
 
-    it('writes discovery files readable only by the owner', () => {
+    it('writes discovery files readable only by the owner', { skip: process.platform === 'win32' && 'Windows has no POSIX modes; files take their ACL from the directory' }, () => {
       const stateDir = server.postil.repo.stateDir;
       for (const name of ['server.json', 'token']) {
         assert.equal(statSync(join(stateDir, name)).mode & 0o777, 0o600, name);
