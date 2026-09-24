@@ -34,6 +34,7 @@ export async function startDaemon(cwd: string, port?: number): Promise<{ client:
     cwd: repo.root,
     detached: true,
     stdio: ['ignore', out.fd, out.fd],
+    windowsHide: true,
   });
   child.unref();
   await out.close();
@@ -112,7 +113,7 @@ export function openBrowser(url: string): Promise<boolean> {
   const [cmd, args] =
     process.platform === 'darwin' ? ['open', [url]] : process.platform === 'win32' ? ['cmd', ['/c', 'start', '', url]] : ['xdg-open', [url]];
   return new Promise<boolean>((done) => {
-    const child = spawn(cmd, args as string[], { stdio: 'ignore', detached: true });
+    const child = spawn(cmd, args as string[], { stdio: 'ignore', detached: true, windowsHide: true });
     child.once('error', () => done(false));
     child.once('spawn', () => {
       child.unref();

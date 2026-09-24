@@ -97,6 +97,8 @@ function runGit(cwd: string, args: readonly string[], opts: GitRunOptions): Prom
       cwd,
       env: { ...baseEnv(), ...opts.env },
       stdio: ['pipe', 'pipe', 'pipe'],
+      // The server has no console on Windows, so without this every git call flashes a window.
+      windowsHide: true,
     });
     const out: Buffer[] = [];
     const err: Buffer[] = [];
