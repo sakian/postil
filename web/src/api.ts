@@ -105,6 +105,7 @@ export const api = {
   finishSession: (opts: FinishOptions) => call<{ threads: number; reviews: number; unpinned: number }>('POST', '/api/session/finish', opts),
   preferences: () => call<Preferences>('GET', '/api/preferences'),
   setPreferences: (change: Partial<Preferences>) => call<Preferences>('PUT', '/api/preferences', change),
+  reset: () => call<{ threads: number; reviews: number; drafts: number; unpinned: number }>('POST', '/api/reset'),
   archivedThreads: () => call<{ threads: ThreadView[] }>('GET', '/api/archive/threads'),
   draft: () => call<{ draft: ReviewView | null }>('GET', '/api/reviews/draft'),
   setDraftBody: (body: string) => call<ReviewView>('PUT', '/api/reviews/draft', { body }),

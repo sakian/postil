@@ -63,6 +63,12 @@ or do whatever you type for it instead. If a review has nothing to say, **Finish
 offers to finish the session straight away. To have Claude commit its changes after each review instead (never pushing), tick that option
 under **Finish review**.
 
+To abandon a review part-way, say because Claude's session ended mid-review and it is blocking
+a new one, press **Discard review** under **Finish review**, run `postil reset`, or run
+`/postil:review reset`. Every conversation and review moves to **Archived**, unsent comments are
+deleted, viewed marks are cleared, and a listening Claude drops what it was doing and waits for
+your next review. `postil stop` only stops the server; your reviews survive it.
+
 For hands-free rounds, Claude must be able to edit without asking: run the session in
 accept-edits or auto mode. The plugin's hooks act only in the session that ran `/postil:review`;
 another session started in the same repository is just told, in one line, that a review server
@@ -81,7 +87,7 @@ postil keeps its state (reviews, comments, the server's address and token) in `.
 and pins the snapshots it needs under `refs/postil/`. It adds nothing to your working tree, and
 the server only listens on `127.0.0.1`.
 
-Other commands: `postil start`, `stop`, `status`, `open`, `url`, `base`, `archive`, `doctor`, and
+Other commands: `postil start`, `stop`, `status`, `open`, `url`, `base`, `archive`, `reset`, `doctor`, and
 `help`.
 
 ## Features

@@ -957,6 +957,21 @@ export class Postil {
   }
 
   /**
+   * The user abandons the review in whatever state it is in, to start a new one. Everything is
+   * archived rather than deleted, except comments Claude never saw, and listening Claude
+   * sessions are told to drop any review they were working on.
+   */
+  async resetReviews(): Promise<{ threads: number; reviews: number; drafts: number; unpinned: number }> {
+    const reset = this.store.resetReviews('Discarded: the user reset the review before Claude finished it.');
+    const { unpinned } = await this.prune();
+    this.bus.emit({ type: 'archive.changed' });
+    this.bus.emit({ type: 'draft.changed' });
+    this.bus.emit({ type: 'marks.changed' });
+    this.bus.emit({ type: 'session.reset' }, ['ui', 'agent']);
+    return { ...reset, unpinned };
+  }
+
+  /**
    * The user is done: every conversation resolved, nothing pending. Archive what is finished and
    * tell listening Claude sessions they can stop. Refuses while anything is still open.
    */

@@ -392,6 +392,35 @@ export class Store {
     });
   }
 
+  /**
+   * Start over. Unsent comments and the draft are deleted, since Claude never saw them; every
+   * conversation is resolved and archived, every review Claude has not finished is closed as
+   * discarded and archived, and viewed and done marks are cleared.
+   */
+  resetReviews(summary: string): { threads: number; reviews: number; drafts: number } {
+    return this.tx(() => {
+      const now = nowIso();
+      const drafts = this.run('DELETE FROM comment WHERE draft = 1').changes;
+      this.run('DELETE FROM thread WHERE NOT EXISTS (SELECT 1 FROM comment WHERE comment.thread_id = thread.id)');
+      this.run("DELETE FROM review WHERE status = 'draft'");
+      const threads = this.run(
+        `UPDATE thread SET status = 'resolved', resolved_at = IFNULL(resolved_at, :now), archived_at = :now
+         WHERE archived_at IS NULL`,
+        { now },
+      ).changes;
+      const discarded = this.run(
+        `UPDATE review SET status = 'addressed', summary = :summary, completed_at = :now,
+           started_at = IFNULL(started_at, :now), archived_at = :now
+         WHERE status IN ('submitted', 'in_progress')`,
+        { summary, now },
+      ).changes;
+      const finished = this.run("UPDATE review SET archived_at = :now WHERE archived_at IS NULL", { now }).changes;
+      this.run('DELETE FROM file_mark');
+      this.run('DELETE FROM section_mark');
+      return { threads, reviews: discarded + finished, drafts };
+    });
+  }
+
   /** Trees still needed: by live threads, live reviews, and the latest review (for "since last review"). */
   treesInUse(): Set<string> {
     const rows = this.all(

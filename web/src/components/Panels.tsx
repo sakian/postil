@@ -76,7 +76,7 @@ function ReviewPanel() {
   const reviews = useStore((s) => s.reviews);
   const threads = useStore((s) => s.threads);
   const commitEach = useStore((s) => s.preferences.commit_each_review);
-  const { setDraftBody, submit, focus, setPreferences } = useStore.getState();
+  const { setDraftBody, submit, focus, setPreferences, resetReviews } = useStore.getState();
   const [body, setBody] = useState(draft?.body ?? '');
   const [busy, setBusy] = useState(false);
   const save = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
@@ -163,6 +163,21 @@ function ReviewPanel() {
               )}
             </div>
           ))}
+        </section>
+      )}
+      {(threads.length > 0 || pendingCount > 0 || history.length > 0) && (
+        <section className="start-over">
+          <h3>Start over</h3>
+          <p className="muted">
+            Archives every conversation and review, deletes unsent comments, clears viewed marks, and tells Claude to drop
+            whatever it is working on.
+          </p>
+          <button className="btn btn-small" onClick={() => {
+            if (window.confirm('Discard this review and start over? Unsent comments are deleted; everything else moves to Archived.')) {
+              clearTimeout(save.current);
+              void resetReviews().then(() => setBody(''));
+            }
+          }}>Discard review…</button>
         </section>
       )}
     </div>

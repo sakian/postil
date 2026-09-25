@@ -179,6 +179,25 @@ export function createMcpServer(env: { projectDir: string; session: string | und
       }),
   );
 
+  server.registerTool(
+    'reset',
+    {
+      title: 'Discard the review',
+      description:
+        'Discard the postil review in progress so the user can start a new one: archive every conversation and review, ' +
+        'delete comments the user has not submitted, and clear viewed marks. Only when the user asks for it.',
+      inputSchema: {},
+    },
+    async () =>
+      withClient(async (client) => {
+        const r = await client.request<{ threads: number; reviews: number; drafts: number }>('POST', '/api/reset');
+        return text(
+          `Archived ${r.threads} conversation(s) and ${r.reviews} review(s), and deleted ${r.drafts} unsent comment(s). ` +
+            'Drop any review you were working on; the user can find the old conversations under Archived.',
+        );
+      }),
+  );
+
   return server;
 }
 

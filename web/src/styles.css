@@ -509,6 +509,7 @@ kbd { font: 12px var(--mono); padding: 1px 6px; border: 1px solid var(--border);
 .option.disabled { opacity: 0.5; cursor: default; }
 .finish-here { margin-top: 12px; padding: 10px 12px; border: 1px solid var(--border); border-radius: var(--radius); }
 .finish-here p { margin: 0 0 8px; font-size: 13px; }
+.start-over p { margin: 0 0 8px; font-size: 13px; }
 .review-panel .finish-controls .option { margin-top: 0; }
 .option { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; cursor: pointer; user-select: none; }
 .review-panel .option { margin-top: 8px; }

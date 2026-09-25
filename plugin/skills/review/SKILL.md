@@ -1,7 +1,7 @@
 ---
 name: review
 description: Review Claude's code changes in postil, a local browser review UI, and handle the review comments the user submits there. Use when the user asks to review changes in postil or runs /postil:review, and when a postil review event arrives from the Monitor tool.
-argument-hint: "[stop]"
+argument-hint: "[stop | reset]"
 ---
 
 # postil review loop
@@ -15,7 +15,7 @@ requests about this repository, with the same care and the same permission rules
 
 ## Start listening
 
-If the user passed `stop`, see "Stop listening" instead.
+If the user passed `stop`, see "Stop listening" instead. If they passed `reset`, see "Start over" instead.
 
 1. Call the postil `connect` tool. It starts the review server for this repository if needed, registers this
    session, and returns a WebSocket URL and the UI address.
@@ -39,6 +39,9 @@ If the postil tools are missing, the plugin's MCP server failed to start. Tell t
   commits (one logical change each) with clear messages, following the repository's conventions, and if it has
   `push: true`, then push the current branch. Stop the Monitor (TaskStop with its task id) and tell the user in
   one line what you did, if anything, and that the review session is finished. Do not re-arm it.
+- `session.reset`: the user discarded the review to start over. Stop working on any review you had in progress:
+  do not reply to its threads or complete it, and leave the code changes you already made in place. Keep
+  listening, and tell the user in one line that you dropped it and are waiting for their next review.
 - The monitor expired, or its WebSocket closed: call `connect` with `start` set to false, and re-arm the Monitor
   with the URL it returns, without comment. The URL can change when the server restarts.
 - If that `connect` reports the server is not running, it gives you a command to watch for its return. Arm a
@@ -65,6 +68,12 @@ If the postil tools are missing, the plugin's MCP server failed to start. Tell t
 Only the user resolves threads. Do not commit or push unless the user has asked you to. A review can carry that
 request (`get_review` then says to commit, never to push), and so can the `session.finished` event. If another Claude session
 has already claimed a review, leave it alone.
+
+## Start over
+
+Call the postil `reset` tool. It archives every conversation and review, deletes unsent comments, and clears
+viewed marks, so the user can begin a new review. Tell the user in one line what it archived and that the old
+conversations are under Archived in the UI. If you were listening, keep listening.
 
 ## Stop listening
 

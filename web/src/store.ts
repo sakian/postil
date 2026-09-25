@@ -152,6 +152,8 @@ interface Actions {
   setDraftBody(body: string): Promise<void>;
   submit(body: string): Promise<void>;
   finishSession(opts: FinishOptions): Promise<void>;
+  /** Discard the review in progress, whatever state it is in, to start a new one. */
+  resetReviews(): Promise<void>;
   setFinishChoices(change: Partial<FinishOptions>): void;
   setPreferences(change: Partial<Preferences>): Promise<void>;
   dismissCompleted(): void;
@@ -709,6 +711,17 @@ export const useStore = create<Store>()((set, get) => {
       }
     },
 
+    async resetReviews() {
+      try {
+        const r = await api.reset();
+        set({ sessionFinished: false, completedReview: null });
+        get().toast(`Started over: archived ${r.threads} conversation${r.threads === 1 ? '' : 's'} and ${r.reviews} review${r.reviews === 1 ? '' : 's'}.`);
+        await Promise.all([get().refreshThreads(), get().refreshReviews(), get().refreshMarks(), get().refreshSections()]);
+      } catch (e) {
+        fail(e);
+      }
+    },
+
     setFinishChoices(change) {
       set({ finishChoices: { ...get().finishChoices, ...change } });
     },
@@ -778,6 +791,11 @@ export const useStore = create<Store>()((set, get) => {
           break;
         case 'session.finished':
           set({ sessionFinished: true });
+          void s.refreshThreads();
+          void s.refreshReviews();
+          break;
+        case 'session.reset':
+          set({ sessionFinished: false, completedReview: null });
           void s.refreshThreads();
           void s.refreshReviews();
           break;

@@ -69,7 +69,7 @@ describe('the self-contained plugin bundle', { timeout: 60_000 }, () => {
         env: { ...process.env as Record<string, string>, CLAUDE_PROJECT_DIR: fx.dir, CLAUDE_CODE_SESSION_ID: 'bundle-test-session' },
         stderr: 'pipe',
       }));
-      assert.equal((await mcp.listTools()).tools.length, 8);
+      assert.equal((await mcp.listTools()).tools.length, 9);
       const out = (await mcp.callTool({ name: 'connect', arguments: {} })) as { content: Array<{ text: string }> };
       assert.match(out.content[0]!.text, /ws:\/\/127\.0\.0\.1:\d+\/events/);
       const status = await run(bundle, ['status'], { cwd: fx.dir });

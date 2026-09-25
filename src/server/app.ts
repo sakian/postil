@@ -226,6 +226,7 @@ export function createApp(postil: Postil, opts: AppOptions): Hono {
   // -------------------------------------------------------------- reviews
   app.get('/api/reviews', (c) => c.json({ reviews: postil.reviews() }));
   app.post('/api/archive', async (c) => c.json(await postil.archiveResolved()));
+  app.post('/api/reset', async (c) => c.json(await postil.resetReviews()));
   app.post('/api/session/finish', async (c) => c.json(await postil.finishSession(await json(c, schemas.finish))));
   app.get('/api/preferences', (c) => c.json(postil.preferences()));
   app.put('/api/preferences', async (c) => c.json(postil.setPreferences(await json(c, schemas.preferences))));

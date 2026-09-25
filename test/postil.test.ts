@@ -897,6 +897,51 @@ describe('hardening', () => {
 });
 
 describe('review fixes', () => {
+  it('resets a review stuck part-way, so a new one can start and the session can finish', async () => {
+    const fx = makeFixture();
+    try {
+      fx.write('f.txt', numbered(10));
+      fx.commit('base');
+      const postil = await Postil.open(fx.dir);
+      const rec = recorder(postil);
+      fx.write('f.txt', numbered(10, { 2: 'two', 8: 'eight' }));
+      const s = await postil.resolveScope({ kind: 'all' });
+      const asked = await postil.createThread({ from_tree: s.from.tree, to_tree: s.to.tree, path: 'f.txt', side: 'new', start_line: 2, body: 'a' });
+      const review = await postil.submitReview();
+      await postil.reviewForAgent(review.id, 'session-a'); // Claude picked it up, then its session died
+      postil.replyAsUser(asked.id, 'and another thing'); // an unsent reply on a live thread
+      const unsent = await postil.createThread({ from_tree: s.from.tree, to_tree: s.to.tree, path: 'f.txt', side: 'new', start_line: 8, body: 'b' });
+      postil.setDraftBody('overall');
+      const f = (await postil.files(s.from.tree, s.to.tree))[0]!;
+      postil.setFileMark('f.txt', f.new_blob!, true);
+      await postil.addSectionMark({ path: 'f.txt', from_blob: f.old_blob, to_blob: f.new_blob, side: 'new', start_line: 1, end_line: 3 });
+
+      rec.clear();
+      const r = await postil.resetReviews();
+      assert.deepEqual([r.threads, r.reviews, r.drafts], [1, 1, 2]);
+      assert.ok(rec.agent().includes('session.reset'), 'a listening Claude is told to drop the review');
+      assert.deepEqual(postil.threads(), []);
+      assert.deepEqual(postil.archivedThreads().map((t) => [t.id, t.status, t.comments.length]), [[asked.id, 'resolved', 1]],
+        'the submitted conversation is archived; the thread that was never sent is gone');
+      assert.equal(postil.store.getThread(unsent.id), null);
+      assert.equal(postil.draft(), null);
+      assert.deepEqual(postil.pendingReviews(), []);
+      assert.equal(postil.store.getReview(review.id)?.status, 'addressed');
+      assert.deepEqual(postil.hookStatus('session-a').in_progress, [], 'the Stop hook no longer holds Claude to it');
+      assert.deepEqual([postil.fileMarks(), postil.sectionMarks()], [[], []]);
+      await rejectsWith(postil.agentReply(asked.id, 'late'), 'thread_resolved');
+
+      // A new review starts clean, and the session can be finished.
+      const fresh = await postil.createThread({ from_tree: s.from.tree, to_tree: s.to.tree, path: 'f.txt', side: 'new', start_line: 8, body: 'c' });
+      assert.equal(postil.draft()?.comment_count, 1);
+      postil.deleteDraft(fresh.comments[0]!.id);
+      await postil.finishSession();
+      postil.close();
+    } finally {
+      fx.cleanup();
+    }
+  });
+
   it('does not archive a resolved thread holding an unsent reply, and un-archives a reopened one', async () => {
     const fx = makeFixture();
     try {

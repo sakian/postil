@@ -27,6 +27,9 @@ Commands:
                            per gh, or the default branch)
                            --empty reviews the whole tree, as if every file were new
   archive                  Archive resolved conversations and finished reviews, and release their snapshots
+  reset                    Discard the review in progress to start a new one: archive every
+                           conversation and review, delete unsent comments, clear viewed marks,
+                           and tell a listening Claude session to drop it
   doctor                   Check Node, git, the UI build, the Claude Code plugin, and the server
   link [--dir <d>] [--force]
                            Put \`postil\` on your PATH (default ~/.local/bin) for use in your terminal
@@ -162,6 +165,12 @@ async function main(argv: string[]): Promise<number> {
       const client = await PostilClient.connect(cwd);
       const r = await client.request<{ threads: number; reviews: number; unpinned: number }>('POST', '/api/archive');
       console.log(`archived ${r.threads} conversation(s) and ${r.reviews} review(s); released ${r.unpinned} snapshot(s)`);
+      return 0;
+    }
+    case 'reset': {
+      const client = await PostilClient.connect(cwd);
+      const r = await client.request<{ threads: number; reviews: number; drafts: number; unpinned: number }>('POST', '/api/reset');
+      console.log(`archived ${r.threads} conversation(s) and ${r.reviews} review(s); deleted ${r.drafts} unsent comment(s); released ${r.unpinned} snapshot(s)`);
       return 0;
     }
     default:
