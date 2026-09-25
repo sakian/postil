@@ -56,6 +56,19 @@ describe('Repo.worktreeTree', () => {
     assert.doesNotMatch(names, /build\//);
   });
 
+  it('drops a file ignored after it was first captured, but keeps an ignored file git tracks', async () => {
+    fx.write('out/early.o', 'x');
+    fx.write('vendor/kept.o', 'y');
+    fx.git('add', 'vendor/kept.o');
+    assert.match(fx.git('ls-tree', '-r', '--name-only', await repo.worktreeTree()), /out\/early\.o/);
+
+    fx.write('.gitignore', 'build/\nout/\n*.o\n');
+    const names = fx.git('ls-tree', '-r', '--name-only', await repo.worktreeTree());
+    assert.doesNotMatch(names, /out\//);
+    assert.match(names, /vendor\/kept\.o/, 'the user\'s index tracks it, so it stays');
+    fx.git('rm', '-q', '--cached', 'vendor/kept.o');
+  });
+
   it('ignores inherited variables that would redirect git elsewhere', async () => {
     const saved = process.env.GIT_INDEX_FILE;
     process.env.GIT_INDEX_FILE = join(fx.dir, 'bogus-index');

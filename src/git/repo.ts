@@ -304,8 +304,8 @@ export class Repo {
    *
    * The private index persists between calls, which keeps git's stat cache warm: only files
    * whose metadata changed are re-hashed. It is seeded from a copy of the real index for the
-   * same reason. Correctness never depends on its prior contents, because `git add -A` makes
-   * it match the working tree exactly.
+   * same reason. Correctness never depends on its prior contents: `git add -A` makes it match
+   * the working tree, and dropping ignored entries the real index does not track finishes the job.
    */
   async worktreeTree(): Promise<string> {
     return this.indexMutex.run(async () => {
@@ -337,7 +337,23 @@ export class Repo {
       }
     }
     await git(this.root, ['add', '-A'], { env });
+    await this.dropIgnored(env);
     return (await gitText(this.root, ['write-tree'], { env })).trim();
+  }
+
+  /**
+   * `git add -A` never removes an entry that is already in the index, even once it is ignored,
+   * so a file that got in before its .gitignore rule did would stay forever. Drop ignored entries
+   * unless the user's own index tracks them, since git keeps a tracked file whatever the rules say.
+   */
+  private async dropIgnored(env: Record<string, string>): Promise<void> {
+    const ignored = ['ls-files', '-z', '--cached', '--ignored', '--exclude-standard'];
+    const stale = (await gitText(this.root, ignored, { env })).split('\0').filter(Boolean);
+    if (stale.length === 0) return;
+    const tracked = new Set((await gitText(this.root, ignored)).split('\0'));
+    const drop = stale.filter((p) => !tracked.has(p));
+    if (drop.length === 0) return;
+    await git(this.root, ['update-index', '-z', '--force-remove', '--stdin'], { env, input: drop.map((p) => `${p}\0`).join('') });
   }
 
   /** Keep a tree alive through `git gc`. Idempotent. Refs to trees stay out of `git log --all`. */
