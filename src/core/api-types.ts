@@ -162,7 +162,7 @@ export interface FinishOptions {
   commit?: boolean;
   /** Push the branch afterwards. */
   push?: boolean;
-  /** The user's own commit message: commit everything left as one commit with it. */
+  /** The user's own instructions for Claude as the session ends, in place of committing and pushing. */
   message?: string;
 }
 

@@ -235,7 +235,7 @@ describe('a review with nothing to say', { timeout: 60_000 }, () => {
     fx.cleanup();
   });
 
-  it('finishes from "Finish review" on the first pass, with the user\'s own commit message', async () => {
+  it('finishes from "Finish review" on the first pass, with the user\'s own instructions for Claude', async () => {
     const page = await browser.newPage({ viewport: { width: 1400, height: 900 } });
     await page.goto(server.uiUrl);
     await page.locator('table.diff').first().waitFor();
@@ -243,8 +243,9 @@ describe('a review with nothing to say', { timeout: 60_000 }, () => {
     const panel = page.locator('.review-panel');
     await panel.getByText('Nothing to send Claude').waitFor();
     assert.equal(await panel.getByRole('button', { name: 'Submit review' }).count(), 0, 'no dead submit button');
-    await panel.getByRole('textbox', { name: 'Commit message' }).fill('Spell out line three');
     await panel.locator('.option', { hasText: 'and push' }).click();
+    await panel.getByRole('textbox', { name: 'Message to Claude' }).fill('Squash it all into one commit and open a PR');
+    assert.ok(await panel.getByRole('checkbox', { name: 'and push' }).isDisabled(), 'the message replaces the options');
     await page.screenshot({ path: `${SHOTS}24-finish-first-pass.png` });
 
     await panel.getByPlaceholder('Overall comment').fill('One thing');
@@ -255,6 +256,6 @@ describe('a review with nothing to say', { timeout: 60_000 }, () => {
     await page.getByRole('dialog', { name: 'Review finished' }).waitFor();
     await until(() => heard.some((e) => e.type === 'session.finished'), 'Claude to hear the session finish');
     assert.deepEqual(heard.find((e) => e.type === 'session.finished'),
-      { type: 'session.finished', commit: true, push: true, message: 'Spell out line three' });
+      { type: 'session.finished', commit: false, push: false, message: 'Squash it all into one commit and open a PR' });
   });
 });

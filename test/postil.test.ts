@@ -787,13 +787,13 @@ describe('archiving and pruning', () => {
       assert.deepEqual(postil.threads(), []);
 
       rec.clear();
-      await postil.finishSession({ commit: true, message: '  Ship it\n' });
+      await postil.finishSession({ commit: true, push: true, message: '  Open a PR\n' });
       assert.deepEqual(rec.events.find((e) => e.event.type === 'session.finished')?.event,
-        { type: 'session.finished', commit: true, push: false, message: 'Ship it' }, 'the user\'s own message, trimmed');
+        { type: 'session.finished', commit: false, push: false, message: 'Open a PR' }, 'the user\'s own instructions replace the options');
       rec.clear();
-      await postil.finishSession({ commit: false, message: 'ignored' });
+      await postil.finishSession({ commit: true, message: '  ' });
       assert.deepEqual(rec.events.find((e) => e.event.type === 'session.finished')?.event,
-        { type: 'session.finished', commit: false, push: false }, 'no message without a commit');
+        { type: 'session.finished', commit: true, push: false }, 'a blank message is no message');
       postil.close();
     } finally {
       fx.cleanup();

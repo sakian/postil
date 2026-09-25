@@ -22,18 +22,22 @@ export function FinishControls() {
   const setMessage = (v: string) => setFinishChoices({ message: v });
   const finish = () => {
     setBusy(true);
-    void finishSession(listening ? { commit, push, message: commit ? message : undefined } : {}).finally(() => setBusy(false));
+    void finishSession(listening ? { commit, push, message } : {}).finally(() => setBusy(false));
   };
+  // Typed instructions replace the checkboxes.
+  const custom = message.trim() !== '';
   return (
     <div className="finish-controls">
       {listening && (
         <>
-          <label className="option"><input type="checkbox" checked={commit} onChange={(e) => setCommit(e.target.checked)} /> Commit anything left</label>
-          <label className="option"><input type="checkbox" checked={push} onChange={(e) => setPush(e.target.checked)} /> and push</label>
-          {commit && (
-            <textarea className="finish-message" rows={2} value={message} onChange={(e) => setMessage(e.target.value)}
-              aria-label="Commit message" placeholder="Commit message (optional: leave blank and Claude writes its own, one commit per change)" />
-          )}
+          <label className={`option${custom ? ' disabled' : ''}`}>
+            <input type="checkbox" checked={commit && !custom} disabled={custom} onChange={(e) => setCommit(e.target.checked)} /> Commit anything left
+          </label>
+          <label className={`option${custom ? ' disabled' : ''}`}>
+            <input type="checkbox" checked={push && !custom} disabled={custom} onChange={(e) => setPush(e.target.checked)} /> and push
+          </label>
+          <textarea className="finish-message" rows={2} value={message} onChange={(e) => setMessage(e.target.value)}
+            aria-label="Message to Claude" placeholder="Or tell Claude what to do instead (replaces the options above)" />
         </>
       )}
       <button className="btn btn-small btn-primary" disabled={busy} onClick={finish}>Finish session</button>

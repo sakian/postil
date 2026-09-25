@@ -504,8 +504,9 @@ kbd { font: 12px var(--mono); padding: 1px 6px; border: 1px solid var(--border);
 .finish-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; flex: 1; }
 .finish-message {
   flex-basis: 100%; min-height: 34px; padding: 6px 8px; border: 1px solid var(--border); border-radius: var(--radius);
-  background: var(--bg); color: var(--fg); font: 13px/1.4 var(--mono); resize: vertical;
+  background: var(--bg); color: var(--fg); font: 13px/1.4 var(--sans); resize: vertical;
 }
+.option.disabled { opacity: 0.5; cursor: default; }
 .finish-here { margin-top: 12px; padding: 10px 12px; border: 1px solid var(--border); border-radius: var(--radius); }
 .finish-here p { margin: 0 0 8px; font-size: 13px; }
 .review-panel .finish-controls .option { margin-top: 0; }

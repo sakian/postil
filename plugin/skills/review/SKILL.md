@@ -33,13 +33,12 @@ If the postil tools are missing, the plugin's MCP server failed to start. Tell t
 
 - `hello`: the monitor connected. If it lists `pending_reviews`, handle each one. Otherwise do nothing and say nothing.
 - `review.submitted`: handle that review.
-- `session.finished`: the user has finished reviewing and ended the session. If it has `commit: true`, commit
-  everything not yet committed as atomic commits (one logical change each) with clear messages, following the
-  repository's conventions. If it also has a `message`, the user wrote their own: instead commit everything not yet
-  committed as one commit with exactly that message (plus any attribution lines you are told to add). If it has
-  `push: true`, then push the current branch. Stop the Monitor (TaskStop with
-  its task id) and tell the user in one line what you committed and pushed, if anything, and that the review
-  session is finished. Do not re-arm it.
+- `session.finished`: the user has finished reviewing and ended the session. If it has a `message`, the user typed
+  their own instructions for wrapping up: follow them as if the user had sent them to you directly, in place of
+  the commit and push options. Otherwise, if it has `commit: true`, commit everything not yet committed as atomic
+  commits (one logical change each) with clear messages, following the repository's conventions, and if it has
+  `push: true`, then push the current branch. Stop the Monitor (TaskStop with its task id) and tell the user in
+  one line what you did, if anything, and that the review session is finished. Do not re-arm it.
 - The monitor expired, or its WebSocket closed: call `connect` with `start` set to false, and re-arm the Monitor
   with the URL it returns, without comment. The URL can change when the server restarts.
 - If that `connect` reports the server is not running, it gives you a command to watch for its return. Arm a
