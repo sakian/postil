@@ -94,15 +94,22 @@ export async function git(cwd: string, args: readonly string[], opts: GitRunOpti
 const inFlight = new Set<Promise<unknown>>();
 
 /**
- * Resolves once no git process started here is still running, or after `timeoutMs`. On Windows a
- * directory cannot be deleted while a process has it as its working directory.
+ * Resolves once no git process started here has run for a moment, or after `timeoutMs`. On
+ * Windows a directory cannot be deleted while a process has it as its working directory. The quiet
+ * period matters because work such as a snapshot runs git several times in a row, with nothing in
+ * flight between one command and the next.
  */
-export async function gitIdle(timeoutMs = 5000): Promise<void> {
+export async function gitIdle(timeoutMs = 5000, quietMs = 100): Promise<void> {
   const deadline = Date.now() + timeoutMs;
-  while (inFlight.size > 0 && Date.now() < deadline) {
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    await Promise.race([Promise.allSettled([...inFlight]), new Promise((r) => { timer = setTimeout(r, deadline - Date.now()); })]);
-    clearTimeout(timer);
+  while (Date.now() < deadline) {
+    if (inFlight.size > 0) {
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      await Promise.race([Promise.allSettled([...inFlight]), new Promise((r) => { timer = setTimeout(r, deadline - Date.now()); })]);
+      clearTimeout(timer);
+      continue;
+    }
+    await new Promise((r) => setTimeout(r, Math.min(quietMs, Math.max(0, deadline - Date.now()))));
+    if (inFlight.size === 0) return;
   }
 }
 
