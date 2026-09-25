@@ -981,7 +981,9 @@ export class Postil {
     }
     const archived = await this.archiveResolved();
     // Claude does any committing and pushing the user asked for, then stops listening.
-    this.bus.emit({ type: 'session.finished', commit: opts.commit === true, push: opts.push === true }, ['ui', 'agent']);
+    const commit = opts.commit === true;
+    const message = commit ? opts.message?.trim() : undefined;
+    this.bus.emit({ type: 'session.finished', commit, push: opts.push === true, ...(message ? { message } : {}) }, ['ui', 'agent']);
     return archived;
   }
 

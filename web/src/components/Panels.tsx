@@ -3,6 +3,7 @@ import { api } from '../api.ts';
 import type { ThreadView } from '../../../src/core/api-types.ts';
 import { isOutdated, isYourTurn, lineLabel, placement, relativeTime, snippet, threadFile } from '../format.ts';
 import { useStore } from '../store.ts';
+import { FinishControls, useFinishable } from './Finish.tsx';
 import { Icon } from './icons.tsx';
 import { Markdown } from './Markdown.tsx';
 import { ThreadWidget } from './Thread.tsx';
@@ -90,7 +91,9 @@ function ReviewPanel() {
 
   const pendingThreads = threads.filter((t) => t.comments.some((c) => c.draft));
   const pendingCount = draft?.comment_count ?? 0;
-  const canSubmit = (pendingCount > 0 || body.trim() !== '') && !busy;
+  const nothingToSend = pendingCount === 0 && body.trim() === '';
+  const canSubmit = !nothingToSend && !busy;
+  const finishable = useFinishable();
   const history = reviews.filter((r) => r.status !== 'draft').sort((a, b) => b.id - a.id);
 
   const doSubmit = async () => {
@@ -129,9 +132,16 @@ function ReviewPanel() {
           <input type="checkbox" checked={commitEach} onChange={(e) => void setPreferences({ commit_each_review: e.target.checked })} />
           Claude commits its changes after each review (never pushes)
         </label>
-        <button className="btn btn-primary btn-block" disabled={!canSubmit} onClick={() => void doSubmit()}>
-          {busy ? 'Submitting…' : 'Submit review'}
-        </button>
+        {nothingToSend && finishable ? (
+          <div className="finish-here">
+            <p className="muted">Nothing to send Claude. If the changes look right, finish the session.</p>
+            <FinishControls />
+          </div>
+        ) : (
+          <button className="btn btn-primary btn-block" disabled={!canSubmit} onClick={() => void doSubmit()}>
+            {busy ? 'Submitting…' : 'Submit review'}
+          </button>
+        )}
       </section>
       {history.length > 0 && (
         <section>

@@ -103,6 +103,8 @@ interface State {
   completedReview: number | null;
   /** The user ended the review session: everything resolved and archived. */
   sessionFinished: boolean;
+  /** What the user has chosen for Claude to do as the session ends, kept while they review. */
+  finishChoices: Required<FinishOptions>;
   preferences: Preferences;
 }
 
@@ -150,6 +152,7 @@ interface Actions {
   setDraftBody(body: string): Promise<void>;
   submit(body: string): Promise<void>;
   finishSession(opts: FinishOptions): Promise<void>;
+  setFinishChoices(change: Partial<FinishOptions>): void;
   setPreferences(change: Partial<Preferences>): Promise<void>;
   dismissCompleted(): void;
 
@@ -281,6 +284,7 @@ export const useStore = create<Store>()((set, get) => {
     toasts: [],
     completedReview: null,
     sessionFinished: false,
+    finishChoices: { commit: true, push: false, message: '' },
     preferences: { commit_each_review: false },
 
     async boot() {
@@ -703,6 +707,10 @@ export const useStore = create<Store>()((set, get) => {
       } catch (e) {
         fail(e);
       }
+    },
+
+    setFinishChoices(change) {
+      set({ finishChoices: { ...get().finishChoices, ...change } });
     },
 
     dismissCompleted() {

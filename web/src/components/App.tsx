@@ -5,6 +5,7 @@ import { markKey, viewedBlob } from '../format.ts';
 import { handleKey, KEYMAP } from '../keyboard.ts';
 import { useStore } from '../store.ts';
 import { DiffPane } from './DiffPane.tsx';
+import { FinishControls, useFinishable } from './Finish.tsx';
 import { Header } from './Header.tsx';
 import { Icon } from './icons.tsx';
 import { SidePanel } from './Panels.tsx';
@@ -69,40 +70,17 @@ function CompletedBanner() {
 function FinishBanner() {
   const files = useStore((s) => s.resolved?.files);
   const viewed = useStore((s) => s.viewed);
-  const threads = useStore((s) => s.threads);
-  const draft = useStore((s) => s.draft);
-  const reviews = useStore((s) => s.reviews);
-  const finished = useStore((s) => s.sessionFinished);
-  const listening = useStore((s) => s.listening > 0);
-  const { finishSession } = useStore.getState();
-  const [busy, setBusy] = useState(false);
-  const [commit, setCommit] = useState(true);
-  const [push, setPush] = useState(false);
-  const ready = useMemo(() => {
-    if (!files?.length || finished) return false;
-    const allViewed = files.every((f) => {
-      const b = viewedBlob(f);
-      return b !== null && viewed.has(markKey(f.path, b));
-    });
-    return allViewed && threads.every((t) => t.status === 'resolved') && !draft?.comment_count &&
-      !reviews.some((r) => r.status === 'submitted' || r.status === 'in_progress');
-  }, [files, viewed, threads, draft, reviews, finished]);
-  if (!ready) return null;
+  const finishable = useFinishable();
+  const allViewed = useMemo(() => !!files?.length && files.every((f) => {
+    const b = viewedBlob(f);
+    return b !== null && viewed.has(markKey(f.path, b));
+  }), [files, viewed]);
+  if (!finishable || !allViewed) return null;
   return (
     <div className="banner banner-done">
       <Icon name="check" size={16} />
       <span>Every file is viewed and every conversation resolved.</span>
-      {listening && (
-        <>
-          <label className="option"><input type="checkbox" checked={commit} onChange={(e) => setCommit(e.target.checked)} /> Commit anything left</label>
-          <label className="option"><input type="checkbox" checked={push} onChange={(e) => setPush(e.target.checked)} /> and push</label>
-        </>
-      )}
-      <button className="btn btn-small btn-primary" disabled={busy}
-        onClick={() => { setBusy(true); void finishSession(listening ? { commit, push } : {}).finally(() => setBusy(false)); }}>
-        Finish session
-      </button>
-      <span className="muted">Archives the conversations{listening ? ' and tells Claude to wrap up' : ''}.</span>
+      <FinishControls />
     </div>
   );
 }

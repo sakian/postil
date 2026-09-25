@@ -9,6 +9,7 @@ import { mkdirSync } from 'node:fs';
 import { after, before, describe, it } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { chromium, type Browser, type Locator, type Page } from 'playwright';
+import { WebSocket } from 'ws';
 import type { ResolvedDiff, ThreadView } from '../src/core/api-types.ts';
 import { startServer, type RunningServer } from '../src/server/server.ts';
 import { makeFixture, numbered, type Fixture } from '../test/helpers.ts';
@@ -205,5 +206,55 @@ describe('the reviewing workflow', { timeout: 180_000 }, () => {
 
   it('raised no errors in the page', () => {
     assert.deepEqual(errors, []);
+  });
+});
+
+describe('a review with nothing to say', { timeout: 60_000 }, () => {
+  let fx: Fixture;
+  let server: RunningServer;
+  let browser: Browser;
+  let claude: WebSocket;
+  const heard: Array<Record<string, unknown>> = [];
+
+  before(async () => {
+    fx = makeFixture();
+    fx.write('a.ts', numbered(10));
+    fx.commit('base');
+    fx.write('a.ts', numbered(10, { 3: 'line three' }));
+    server = await startServer({ cwd: fx.dir, port: 0, pollMs: 200 });
+    claude = new WebSocket(`${server.info.url.replace(/^http/, 'ws')}/events?token=${server.info.token}&channel=agent&session=e2e`);
+    claude.on('message', (m) => heard.push(JSON.parse(String(m)) as Record<string, unknown>));
+    await new Promise((r) => claude.once('open', r));
+    browser = await chromium.launch();
+  });
+
+  after(async () => {
+    claude.close();
+    await browser.close();
+    await server.close();
+    fx.cleanup();
+  });
+
+  it('finishes from "Finish review" on the first pass, with the user\'s own commit message', async () => {
+    const page = await browser.newPage({ viewport: { width: 1400, height: 900 } });
+    await page.goto(server.uiUrl);
+    await page.locator('table.diff').first().waitFor();
+    await page.getByRole('button', { name: 'Finish review' }).click();
+    const panel = page.locator('.review-panel');
+    await panel.getByText('Nothing to send Claude').waitFor();
+    assert.equal(await panel.getByRole('button', { name: 'Submit review' }).count(), 0, 'no dead submit button');
+    await panel.getByRole('textbox', { name: 'Commit message' }).fill('Spell out line three');
+    await panel.locator('.option', { hasText: 'and push' }).click();
+    await page.screenshot({ path: `${SHOTS}24-finish-first-pass.png` });
+
+    await panel.getByPlaceholder('Overall comment').fill('One thing');
+    await panel.getByRole('button', { name: 'Submit review' }).waitFor();
+    await panel.getByPlaceholder('Overall comment').fill('');
+
+    await panel.getByRole('button', { name: 'Finish session' }).click();
+    await page.getByRole('dialog', { name: 'Review finished' }).waitFor();
+    await until(() => heard.some((e) => e.type === 'session.finished'), 'Claude to hear the session finish');
+    assert.deepEqual(heard.find((e) => e.type === 'session.finished'),
+      { type: 'session.finished', commit: true, push: true, message: 'Spell out line three' });
   });
 });

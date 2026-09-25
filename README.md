@@ -58,8 +58,9 @@ again or resolve threads, submit again, and repeat until you are happy. The head
 Claude is listening.
 
 When every file is viewed and every conversation resolved, **Finish session** archives the
-conversations and tells Claude to stop listening, and can have it commit anything left and push.
-To have Claude commit its changes after each review instead (never pushing), tick that option
+conversations and tells Claude to stop listening, and can have it commit anything left, with
+Claude's messages or one of your own, and push. If a review has nothing to say, **Finish review**
+offers to finish the session straight away. To have Claude commit its changes after each review instead (never pushing), tick that option
 under **Finish review**.
 
 For hands-free rounds, Claude must be able to edit without asking: run the session in

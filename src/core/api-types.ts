@@ -162,6 +162,8 @@ export interface FinishOptions {
   commit?: boolean;
   /** Push the branch afterwards. */
   push?: boolean;
+  /** The user's own commit message: commit everything left as one commit with it. */
+  message?: string;
 }
 
 export interface CommitsInfo {

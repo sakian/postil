@@ -785,6 +785,15 @@ describe('archiving and pruning', () => {
       assert.deepEqual(rec.agent(), ['session.finished'], 'Claude hears only that the session is over');
       assert.deepEqual(rec.events.find((e) => e.event.type === 'session.finished')?.event, { type: 'session.finished', commit: true, push: true });
       assert.deepEqual(postil.threads(), []);
+
+      rec.clear();
+      await postil.finishSession({ commit: true, message: '  Ship it\n' });
+      assert.deepEqual(rec.events.find((e) => e.event.type === 'session.finished')?.event,
+        { type: 'session.finished', commit: true, push: false, message: 'Ship it' }, 'the user\'s own message, trimmed');
+      rec.clear();
+      await postil.finishSession({ commit: false, message: 'ignored' });
+      assert.deepEqual(rec.events.find((e) => e.event.type === 'session.finished')?.event,
+        { type: 'session.finished', commit: false, push: false }, 'no message without a commit');
       postil.close();
     } finally {
       fx.cleanup();

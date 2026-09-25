@@ -70,7 +70,7 @@ const schemas = {
   agentReply: z.object({ body: z.string(), needs_decision: z.boolean().optional() }),
   complete: z.object({ summary: z.string() }),
   preferences: z.object({ commit_each_review: z.boolean().optional() }),
-  finish: z.object({ commit: z.boolean().optional(), push: z.boolean().optional() }),
+  finish: z.object({ commit: z.boolean().optional(), push: z.boolean().optional(), message: z.string().max(10_000).optional() }),
   fileMark: z.object({ path: z.string().min(1), blob: oid, viewed: z.boolean() }),
   sectionMark: z.object({
     path: z.string().min(1), from_blob: oid.nullable(), to_blob: oid.nullable(), side, start_line: line, end_line: line,
