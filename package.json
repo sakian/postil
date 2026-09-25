@@ -20,7 +20,8 @@
     "test": "node --test --test-reporter=spec \"test/**/*.test.ts\"",
     "test:e2e": "node --test --test-reporter=spec \"e2e/**/*.e2e.ts\"",
     "check": "npm run typecheck && npm test",
-    "install-plugin": "node scripts/install-plugin.ts"
+    "install-plugin": "node scripts/install-plugin.ts",
+    "screenshots": "node e2e/screenshots.ts"
   },
   "dependencies": {
     "@hono/node-server": "^2.1.1",

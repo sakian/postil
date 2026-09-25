@@ -8,6 +8,16 @@ until you resolve every thread. Everything stays on your machine.
 
 *A postil is a marginal note on a text.*
 
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/review-dark.png">
+  <img alt="A review in postil: Claude has applied a suggested change to src/server.ts and replied in the thread" src="docs/screenshots/review-light.png">
+</picture>
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/split-dark.png">
+  <img alt="The split view, with a thread where Claude asks for a decision" src="docs/screenshots/split-light.png">
+</picture>
+
 ## Setup
 
 Requires Node 24, git 2.43 or newer, and Claude Code.
@@ -122,6 +132,9 @@ POSTIL_URL=http://127.0.0.1:<port> npm run dev:web
 ```
 
 Then open `http://localhost:5173/#token=<token>`, with the token from `postil url`.
+
+`npm run screenshots` regenerates the screenshots above from a demo repository (after
+`npm run build`).
 
 `node e2e/perf.ts` loads and scrolls a synthetic review (300 files; set `FILES=2000` for more)
 and reports load time, main-thread blocking and DOM size.
