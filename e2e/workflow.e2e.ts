@@ -180,6 +180,20 @@ describe('the reviewing workflow', { timeout: 180_000 }, () => {
     await page.locator('.tree-dir', { hasText: 'pkg' }).click();
   });
 
+  it('marks every file in a folder viewed at once, and back', async () => {
+    const dir = page.locator('.tree-dir', { hasText: 'pkg' });
+    const progress = page.locator('.sidebar .progress');
+    const before = await progress.innerText();
+    await dir.hover();
+    await page.screenshot({ path: `${SHOTS}24-folder-viewed.png`, clip: { x: 0, y: 0, width: 400, height: 300 } });
+    await dir.getByRole('button', { name: 'Mark pkg viewed' }).click();
+    await until(async () => (await page.locator('.tree-file.is-viewed').count()) === 12, 'every file in pkg to be viewed');
+    assert.notEqual(await progress.innerText(), before);
+
+    await dir.getByRole('button', { name: 'Mark pkg not viewed' }).click();
+    await until(async () => (await page.locator('.tree-file.is-viewed').count()) === 0, 'every file in pkg to be unviewed');
+  });
+
   it('finishes the session once everything is reviewed and resolved', async () => {
     // Claude answers the pending comments, the user resolves everything and views every file.
     const review = await api<{ id: number }>('POST', '/api/reviews/submit', { body: '' });

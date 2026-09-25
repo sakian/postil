@@ -176,7 +176,18 @@ code, pre { font-family: var(--mono); }
   text-align: left; cursor: pointer; font-size: 13px; color: var(--fg);
 }
 .tree-row:hover { background: var(--bg-inset); }
-.tree-dir { color: var(--fg-muted); }
+.tree-dir { color: var(--fg-muted); padding: 0; gap: 0; }
+.tree-dir-toggle {
+  display: flex; align-items: center; gap: 6px; flex: 1; min-width: 0; padding: 3px 8px; border: none; background: none;
+  text-align: left; cursor: pointer; font: inherit; color: inherit;
+}
+.tree-dir-view {
+  display: inline-flex; align-items: center; justify-content: center; width: 20px; height: 20px; margin-right: 6px; flex: none;
+  border: 1px solid var(--border); border-radius: 4px; background: var(--bg); color: var(--fg-muted); cursor: pointer; opacity: 0;
+}
+.tree-dir:hover .tree-dir-view, .tree-dir-view:focus-visible { opacity: 1; }
+.tree-dir-view:hover { color: var(--primary); border-color: var(--primary); }
+@media (hover: none) { .tree-dir-view { opacity: 1; } }
 .tree-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
 .tree-file.is-viewed .tree-name { color: var(--fg-muted); }
 .tree-badge { font-size: 11px; background: var(--accent); color: #fff; border-radius: 8px; padding: 0 6px; }

@@ -10,7 +10,7 @@ export function Sidebar() {
   const collapsedDirs = useStore((s) => s.collapsedDirs);
   const viewed = useStore((s) => s.viewed);
   const threads = useStore((s) => s.threads);
-  const { toggleDir, setCollapsedDirs, revealFile } = useStore.getState();
+  const { toggleDir, setCollapsedDirs, revealFile, setViewedMany } = useStore.getState();
 
   const tree = useMemo(() => buildTree(resolved?.files ?? []), [resolved]);
   const allDirs = useMemo(() => dirPaths(tree), [tree]);
@@ -58,19 +58,26 @@ export function Sidebar() {
           if (node.type === 'dir') {
             const isCollapsed = collapsed.has(node.path);
             // A collapsed folder summarises what is inside: files left to view, and open conversations.
-            const inside = isCollapsed ? filesUnder(node) : [];
+            const inside = filesUnder(node);
             const left = inside.filter((f) => !isViewed(f)).length;
-            const open = inside.reduce((n, f) => n + (openByPath.get(f.path) ?? 0), 0);
+            const open = isCollapsed ? inside.reduce((n, f) => n + (openByPath.get(f.path) ?? 0), 0) : 0;
             return (
-              <button key={`d:${node.path}`} className="tree-row tree-dir" style={pad} onClick={() => toggleDir(node.path)} aria-expanded={!isCollapsed}>
-                <Icon name={isCollapsed ? 'chevronRight' : 'chevronDown'} size={14} />
-                <Icon name="folder" size={14} />
-                <span className="tree-name">{node.name}</span>
-                {isCollapsed && open > 0 && <span className="tree-badge" title={`${open} open conversation(s)`}>{open}</span>}
-                {isCollapsed && (left > 0
-                  ? <span className="tree-count" title={`${left} of ${inside.length} file(s) not viewed yet`}>{left} to view</span>
-                  : <Icon name="check" size={14} title="Every file viewed" />)}
-              </button>
+              <div key={`d:${node.path}`} className="tree-row tree-dir">
+                <button className="tree-dir-toggle" style={pad} onClick={() => toggleDir(node.path)} aria-expanded={!isCollapsed}>
+                  <Icon name={isCollapsed ? 'chevronRight' : 'chevronDown'} size={14} />
+                  <Icon name="folder" size={14} />
+                  <span className="tree-name">{node.name}</span>
+                  {open > 0 && <span className="tree-badge" title={`${open} open conversation(s)`}>{open}</span>}
+                  {isCollapsed && (left > 0
+                    ? <span className="tree-count" title={`${left} of ${inside.length} file(s) not viewed yet`}>{left} to view</span>
+                    : <Icon name="check" size={14} title="Every file viewed" />)}
+                </button>
+                <button className="tree-dir-view" onClick={() => void setViewedMany(inside, left > 0)}
+                  title={left > 0 ? `Mark ${left === inside.length ? 'all' : 'the other'} ${left} file(s) in ${node.path} viewed` : `Mark every file in ${node.path} not viewed`}
+                  aria-label={left > 0 ? `Mark ${node.path} viewed` : `Mark ${node.path} not viewed`}>
+                  <Icon name={left > 0 ? 'check' : 'close'} size={12} />
+                </button>
+              </div>
             );
           }
           const f = node.file;

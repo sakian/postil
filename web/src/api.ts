@@ -113,6 +113,8 @@ export const api = {
 
   fileMarks: () => call<{ marks: FileMarkRow[] }>('GET', '/api/marks/files'),
   setFileMark: (path: string, blob: string, viewed: boolean) => call<{ ok: true }>('PUT', '/api/marks/files', { path, blob, viewed }),
+  setFileMarks: (files: Array<{ path: string; blob: string }>, viewed: boolean) =>
+    call<{ ok: true }>('PUT', '/api/marks/files/batch', { files, viewed }),
 
   sectionMarks: (trees: { from: string; to: string }) =>
     call<{ marks: AnchoredSectionMark[] }>('GET', `/api/marks/sections?${q({ from: trees.from, to: trees.to })}`),

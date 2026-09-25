@@ -139,6 +139,8 @@ interface Actions {
   setFold(path: string, folded: boolean): void;
   /** Viewed means every section done: viewing marks them all, unviewing clears them unless `keepSections`. */
   setViewed(file: FileChange, viewed: boolean, opts?: { keepSections?: boolean }): Promise<void>;
+  /** Mark many files viewed or not in one request, such as every file in a folder. */
+  setViewedMany(files: FileChange[], viewed: boolean): Promise<void>;
 
   select(target: Target | null): void;
   setComposerText(key: string, text: string | null): void;
@@ -583,6 +585,37 @@ export const useStore = create<Store>()((set, get) => {
           await api.setFileMark(file.path, blob, viewed);
           if (viewed !== was && !opts.keepSections) await syncSections(file, viewed);
         });
+      } catch (e) {
+        fail(e);
+        await get().refreshMarks();
+      }
+    },
+
+    async setViewedMany(files, viewed) {
+      const changing = files.flatMap((file) => {
+        const blob = viewedBlob(file);
+        return blob && get().viewed.has(markKey(file.path, blob)) !== viewed ? [{ file, blob }] : [];
+      });
+      if (changing.length === 0) return;
+      set((s) => {
+        const next = new Set(s.viewed);
+        const fileFold = { ...s.fileFold };
+        for (const { file, blob } of changing) {
+          if (viewed) next.add(markKey(file.path, blob));
+          else next.delete(markKey(file.path, blob));
+          delete fileFold[file.path]; // viewing a file folds it
+        }
+        return { viewed: next, fileFold };
+      });
+      try {
+        await api.setFileMarks(changing.map(({ file, blob }) => ({ path: file.path, blob })), viewed);
+        // Keep sections in step only where there are any to touch: a loaded diff to mark done, or marks to clear.
+        for (const { file } of changing) {
+          const loaded = get().diffs[diffKey(file)]?.state === 'ready';
+          if (viewed ? loaded : validMarks(get().sections, file).length > 0) {
+            await queued(file.path, () => syncSections(file, viewed));
+          }
+        }
       } catch (e) {
         fail(e);
         await get().refreshMarks();

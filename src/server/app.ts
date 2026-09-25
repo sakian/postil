@@ -72,6 +72,7 @@ const schemas = {
   preferences: z.object({ commit_each_review: z.boolean().optional() }),
   finish: z.object({ commit: z.boolean().optional(), push: z.boolean().optional(), message: z.string().max(10_000).optional() }),
   fileMark: z.object({ path: z.string().min(1), blob: oid, viewed: z.boolean() }),
+  fileMarks: z.object({ files: z.array(z.object({ path: z.string().min(1), blob: oid })).max(100_000), viewed: z.boolean() }),
   sectionMark: z.object({
     path: z.string().min(1), from_blob: oid.nullable(), to_blob: oid.nullable(), side, start_line: line, end_line: line,
   }),
@@ -242,6 +243,11 @@ export function createApp(postil: Postil, opts: AppOptions): Hono {
   app.put('/api/marks/files', async (c) => {
     const b = await json(c, schemas.fileMark);
     postil.setFileMark(b.path, b.blob, b.viewed);
+    return c.json({ ok: true });
+  });
+  app.put('/api/marks/files/batch', async (c) => {
+    const b = await json(c, schemas.fileMarks);
+    postil.setFileMarks(b.files, b.viewed);
     return c.json({ ok: true });
   });
   app.get('/api/marks/sections', async (c) => {

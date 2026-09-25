@@ -904,6 +904,18 @@ export class Postil {
     this.bus.emit({ type: 'marks.changed' });
   }
 
+  /** Mark many files viewed or not at once, such as a whole folder, with one event. */
+  setFileMarks(files: ReadonlyArray<{ path: string; blob: string }>, viewed: boolean): void {
+    for (const f of files) assertOid(f.blob, 'blob id');
+    this.store.tx(() => {
+      for (const f of files) {
+        if (viewed) this.store.addFileMark(f.path, f.blob);
+        else this.store.removeFileMark(f.path, f.blob);
+      }
+    });
+    this.bus.emit({ type: 'marks.changed' });
+  }
+
   sectionMarks(path?: string) {
     return this.store.listSectionMarks(path);
   }
