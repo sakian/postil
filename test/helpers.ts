@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync, unlinkSync, symlinkSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync, unlinkSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 
@@ -15,7 +15,9 @@ export interface Fixture {
 
 /** A throwaway repository with deterministic identity and dates. */
 export function makeFixture(opts: { initialBranch?: string } = {}): Fixture {
-  const dir = mkdtempSync(join(tmpdir(), 'postil-test-'));
+  // The temp dir can be an 8.3 short path on Windows (C:\Users\RUNNER~1) or a symlink on macOS,
+  // while git reports the full path. Start from the full path so the two compare equal.
+  const dir = realpathSync.native(mkdtempSync(join(tmpdir(), 'postil-test-')));
   const env = {
     ...process.env,
     GIT_AUTHOR_NAME: 'Test', GIT_AUTHOR_EMAIL: 'test@example.com',
