@@ -98,7 +98,7 @@ function FileView({ file, threads }: { file: FileChange; threads: ThreadView[] }
   }, []);
   const nearViewport = near || holdsWork;
 
-  // Huge diffs wait for an explicit request, as on GitHub: rendering thousands of rows unasked
+  // Huge diffs wait for an explicit request: rendering thousands of rows unasked
   // would stall the page for a file the user may not need to read line by line.
   const changedLines = (file.additions ?? 0) + (file.deletions ?? 0);
   const [largeRequested, setLargeRequested] = useState(false);

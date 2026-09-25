@@ -568,7 +568,7 @@ export const useStore = create<Store>()((set, get) => {
         const next = new Set(s.viewed);
         if (viewed) next.add(key);
         else next.delete(key);
-        const { [file.path]: _drop, ...fileFold } = s.fileFold; // viewing a file folds it, like GitHub
+        const { [file.path]: _drop, ...fileFold } = s.fileFold; // viewing a file folds it
         return { viewed: next, fileFold };
       });
       try {

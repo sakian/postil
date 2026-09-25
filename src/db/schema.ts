@@ -9,7 +9,7 @@ export const MIGRATIONS: readonly string[] = [
     value TEXT NOT NULL
   );
 
-  -- Trees kept alive by a ref under refs/postil/trees/. One row per distinct tree.
+  -- Trees kept alive by a ref under refs/postil/<worktree>/trees/. One row per distinct tree.
   CREATE TABLE snapshot (
     id         INTEGER PRIMARY KEY,
     tree       TEXT NOT NULL UNIQUE,

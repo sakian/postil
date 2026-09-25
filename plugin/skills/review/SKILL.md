@@ -1,6 +1,6 @@
 ---
 name: review
-description: Review Claude's code changes in postil, a local GitHub-style review UI, and handle the review comments the user submits there. Use when the user asks to review changes in postil or runs /postil:review, and when a postil review event arrives from the Monitor tool.
+description: Review Claude's code changes in postil, a local browser review UI, and handle the review comments the user submits there. Use when the user asks to review changes in postil or runs /postil:review, and when a postil review event arrives from the Monitor tool.
 argument-hint: "[stop]"
 ---
 

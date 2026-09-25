@@ -1,11 +1,11 @@
 {
   "name": "postil",
-  "description": "Local GitHub-style code review for Claude Code diffs.",
-  "owner": { "name": "Mark", "email": "mark@opifex.ca" },
+  "description": "Local code review for Claude Code diffs.",
+  "owner": { "name": "Mark Bremer" },
   "plugins": [
     {
       "name": "postil",
-      "description": "Review Claude's changes in a local GitHub-style UI; submitted reviews wake Claude, which addresses each comment and replies.",
+      "description": "Review Claude's changes in a local browser UI; submitted reviews wake Claude, which addresses each comment and replies.",
       "source": "./plugin",
       "category": "development"
     }

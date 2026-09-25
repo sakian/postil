@@ -1,6 +1,6 @@
 # postil
 
-Local, GitHub-style code review for diffs that Claude Code produces.
+Local code review for diffs that Claude Code produces.
 
 Review changes in a browser, leave comments on line ranges, and submit a review. A Claude Code
 session picks the review up automatically, edits the code, and replies to each thread. Iterate
@@ -13,7 +13,7 @@ until you resolve every thread. Everything stays on your machine.
 Requires Node 24, git 2.43 or newer, and Claude Code.
 
 ```sh
-git clone git@github.com:sakian/postil.git ~/postil && cd ~/postil
+git clone https://github.com/sakian/postil.git ~/postil && cd ~/postil
 npm install
 npm run install-plugin          # builds postil and installs its Claude Code plugin from this checkout
 ```
@@ -73,25 +73,34 @@ the server only listens on `127.0.0.1`.
 Other commands: `postil start`, `stop`, `status`, `open`, `url`, `base`, `archive`, `doctor`, and
 `help`.
 
-## Status
+## Features
 
-- **Phase 0 — spikes: done.** The automatic wake-up, the Stop-hook gate, and commit-free
-  snapshots are all verified. See [`docs/PHASE0.md`](docs/PHASE0.md).
-- **Phase 1 — server core: done.** Git engine, SQLite store, review workflow, HTTP API,
-  WebSocket event feed, and CLI. Verified end to end with a real Claude Code monitor.
-- **Phase 2 — browser UI: done.** Unified and split diffs, expandable and recollapsible context,
-  line-range comments, reviews, conversations, viewed files, and outdated comments kept in view.
-- **Phase 3 — Claude Code plugin: done.** Submitted reviews wake a listening session, which
-  handles them with no prompt. Verified with real Claude sessions, including an idle one.
-- **Phase 4 — scope and history: done.** Comments follow their code as it moves, outdated ones
-  show what changed, suggestions apply with one click (or by Claude), files updated since your
-  last review are marked, and any range of commits can be reviewed.
-- **Phase 5 — polish: done.** Mark sections done (they stay done through edits elsewhere),
-  keyboard shortcuts (press `?`), syntax highlighting, smooth scrolling through hundreds of
-  files, and archiving of finished conversations.
-- **Phase 6 — hardening: done.** Safe against Claude editing while you review, image previews,
-  minified and renamed files, 2,000-file reviews, several repositories and worktrees at once, and
-  a self-contained plugin with a one-command install.
+- Unified and split diffs, with context you can expand and collapse again, syntax highlighting,
+  changed words highlighted within lines, and image previews.
+- Comments on any line range, sent as a review. Claude replies in each thread and may flag one
+  as needing your decision; only you resolve threads.
+- Suggestions in comments apply with one click, or Claude can apply them.
+- Review all changes, uncommitted changes, changes since your last review, or any range of
+  commits. Files updated since your last review are marked.
+- Comments follow their code as it moves. Comments on code that changed are marked outdated and
+  show what changed.
+- Mark files viewed or individual sections done. Marks stay through edits elsewhere in the file.
+- Keyboard shortcuts (press `?`), smooth scrolling through reviews of 2,000 files, and archiving
+  of finished conversations.
+- Claude can commit its changes after each review, or commit and push when you finish the
+  session.
+- Works in several repositories and worktrees at once, and is safe against Claude editing while
+  you review.
+
+## Limitations
+
+- The automatic wake-up relies on Claude Code's `Monitor` tool listening on a WebSocket, which is
+  not documented and could change. If it stops working, the plugin's hooks still hand Claude the
+  review the next time it is active.
+- postil is installed from a checkout. It is not yet published to npm or a hosted plugin
+  marketplace.
+- Tested on Linux and Windows.
+- Everything is local: reviews live in one clone and are not shared between machines.
 
 ## Development
 
@@ -129,4 +138,8 @@ npx playwright install --with-deps chromium
 npm run build && npm run test:e2e
 ```
 
-See [`docs/PLAN.md`](docs/PLAN.md) for the full design.
+See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for how postil works.
+
+## License
+
+[MIT](LICENSE)

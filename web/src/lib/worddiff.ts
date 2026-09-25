@@ -11,8 +11,8 @@ function tokenize(s: string): string[] {
 }
 
 /**
- * The words that differ between a removed line and the added line paired with it, as GitHub
- * highlights them. Null when the lines have too little in common for highlights to help.
+ * The words that differ between a removed line and the added line paired with it, for
+ * highlighting. Null when the lines have too little in common for highlights to help.
  */
 export function wordDiff(a: string, b: string): { old: Span[]; new: Span[] } | null {
   if (a === b) return null;

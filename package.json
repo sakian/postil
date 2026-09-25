@@ -1,10 +1,11 @@
 {
   "name": "postil",
   "version": "0.1.0",
-  "description": "Local GitHub-style code review for Claude Code diffs, with automatic Claude pickup",
+  "description": "Local code review for Claude Code diffs, with automatic Claude pickup",
   "type": "module",
   "private": true,
-  "license": "UNLICENSED",
+  "author": "Mark Bremer",
+  "license": "MIT",
   "engines": {
     "node": ">=24"
   },

@@ -62,7 +62,7 @@ export type Row =
       canDown: boolean;
       /** Reveal lines just above whatever sits below this block. */
       canUp: boolean;
-      /** Header of the hunk directly below, shown GitHub-style in the expander. */
+      /** Header of the hunk directly below, shown in the expander. */
       header: string | null;
       /** Index of the hunk directly below, when this expander heads it. */
       hunk: number | null;
