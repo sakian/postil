@@ -150,6 +150,12 @@ code, pre { font-family: var(--mono); }
 .claude-status.idle { color: var(--fg-muted); border: 1px dashed var(--border); }
 .claude-status .dot { width: 8px; height: 8px; border-radius: 50%; background: currentColor; }
 @media (prefers-color-scheme: dark) { .claude-status.listening { background: rgba(46, 160, 67, 0.2); color: #3fb950; } }
+.claude-status.your-turn {
+  font: inherit; font-size: 12px; font-weight: 600; border: none; cursor: pointer; background: var(--primary); color: #fff;
+  animation: your-turn 1.6s ease-out 3;
+}
+.claude-status.your-turn:hover { background: var(--primary-hover); }
+@keyframes your-turn { from { box-shadow: 0 0 0 0 rgba(31, 136, 61, 0.6); } to { box-shadow: 0 0 0 10px rgba(31, 136, 61, 0); } }
 .pulse { width: 8px; height: 8px; border-radius: 50%; background: var(--claude); animation: pulse 1.2s ease-in-out infinite; }
 @keyframes pulse { 50% { opacity: 0.25; } }
 .segmented { display: inline-flex; border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; }
@@ -161,7 +167,8 @@ code, pre { font-family: var(--mono); }
 .conn.off { background: var(--danger); animation: pulse 1s infinite; }
 
 .layout { display: flex; flex: 1; min-height: 0; }
-.main { flex: 1; min-width: 0; overflow: auto; padding: 16px 20px 80px; }
+.main-col { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.main { flex: 1; min-width: 0; min-height: 0; overflow: auto; padding: 16px 20px 80px; }
 
 /* ------------------------------------------------------------------ sidebar */
 .sidebar { width: 300px; flex: none; border-right: 1px solid var(--border); display: flex; flex-direction: column; min-height: 0; }
@@ -492,6 +499,13 @@ kbd { font: 12px var(--mono); padding: 1px 6px; border: 1px solid var(--border);
 /* ------------------------------------------------------------------ finishing */
 .banner-done { border-color: #4ac26b; background: #dafbe1; color: #1a7f37; }
 .banner-done .muted { color: inherit; opacity: 0.8; font-size: 12px; }
+.banner-your-turn {
+  flex: none; flex-direction: column; align-items: stretch; gap: 8px; padding: 12px 14px; margin: 12px 20px 0;
+  border-width: 1px 1px 1px 4px; max-height: 40vh; overflow: auto;
+}
+.banner-your-turn strong { font-size: 15px; }
+.your-turn-head, .your-turn-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.banner-your-turn .history-summary { color: var(--fg); margin: 0; padding-top: 8px; border-top-color: rgba(74, 194, 107, 0.4); }
 @media (prefers-color-scheme: dark) { .banner-done { background: rgba(46, 160, 67, 0.15); color: #3fb950; border-color: rgba(46, 160, 67, 0.4); } }
 .modal.finished { padding: 28px 28px 22px; text-align: center; position: relative; z-index: 1; }
 .modal.finished h2 { margin: 10px 0 6px; font-size: 20px; }

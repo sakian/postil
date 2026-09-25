@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { api } from '../api.ts';
 import type { ThreadView } from '../../../src/core/api-types.ts';
 import { isOutdated, isYourTurn, lineLabel, placement, relativeTime, snippet, threadFile } from '../format.ts';
-import { useStore } from '../store.ts';
+import { askToNotify, useStore } from '../store.ts';
 import { FinishControls, useFinishable } from './Finish.tsx';
 import { Icon } from './icons.tsx';
 import { Markdown } from './Markdown.tsx';
@@ -97,6 +97,7 @@ function ReviewPanel() {
   const history = reviews.filter((r) => r.status !== 'draft').sort((a, b) => b.id - a.id);
 
   const doSubmit = async () => {
+    askToNotify();
     setBusy(true);
     clearTimeout(save.current);
     try {

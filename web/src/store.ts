@@ -717,7 +717,7 @@ export const useStore = create<Store>()((set, get) => {
     async submit(body) {
       try {
         const review = await api.submit(body);
-        set({ panel: null });
+        set({ panel: null, completedReview: null });
         get().toast(`Review #${review.id} submitted. Claude will pick it up.`);
         await Promise.all([get().refreshThreads(), get().refreshReviews()]);
       } catch (e) {
@@ -817,6 +817,7 @@ export const useStore = create<Store>()((set, get) => {
           void s.refreshReviews();
           void s.refreshThreads();
           set({ completedReview: Number(e.review_id) });
+          notifyYourTurn(Number(e.review_id));
           break;
         }
         case 'preferences.changed':
@@ -859,6 +860,21 @@ export const useStore = create<Store>()((set, get) => {
     },
   };
 });
+
+/** Ask to send desktop notifications. Called on submitting, the moment the user starts waiting on Claude. */
+export function askToNotify(): void {
+  if (typeof Notification !== 'undefined' && Notification.permission === 'default') void Notification.requestPermission();
+}
+
+/** Tell a user who is looking at another window that Claude is done and it is their turn. */
+function notifyYourTurn(id: number): void {
+  if (!document.hidden || typeof Notification === 'undefined' || Notification.permission !== 'granted') return;
+  const n = new Notification('postil: your turn', { body: `Claude finished review #${id}.`, tag: 'postil-your-turn' });
+  n.onclick = () => {
+    window.focus();
+    n.close();
+  };
+}
 
 // Exposed for debugging and browser tests. Everything in it is also available through the API.
 (globalThis as { __postil?: typeof useStore }).__postil = useStore;

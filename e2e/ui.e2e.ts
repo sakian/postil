@@ -186,13 +186,19 @@ describe('postil UI', { timeout: 120_000 }, () => {
     const finished = page.locator('.banner-done', { hasText: 'Claude finished review #1' });
     await finished.waitFor();
     assert.equal(await finished.getByRole('button', { name: 'Show changes since review #1' }).count(), 1);
+    await until(async () => /one needs your call/.test(await finished.innerText()), "Claude's summary in the banner");
+    // It is the user's turn, loudly: in the header and in the browser tab.
+    assert.match(await page.locator('.claude-status').innerText(), /Your turn: Claude finished #1/);
+    assert.match(await page.title(), /^● Your turn/);
+    assert.match(await page.locator('link[rel="icon"]').getAttribute('href') ?? '', /circle/, 'a dot on the tab icon');
     const db = file('src/db.ts');
     await until(async () => /now propagate/.test(await db.innerText()), "Claude's reply in the db.ts thread");
     assert.match(await db.locator('.thread').innerText(), /Needs your decision/);
-    assert.match(await page.locator('.claude-status').innerText(), /not listening/, 'no Claude session is connected in this test');
     await shot('07-claude-replied');
     await finished.getByTitle('Dismiss').click();
     await until(async () => (await finished.count()) === 0, 'the banner to go');
+    assert.match(await page.locator('.claude-status').innerText(), /not listening/, 'no Claude session is connected in this test');
+    assert.equal(await page.title(), 'postil');
   });
 
   it('notices files changing on disk and keeps outdated comments visible in the diff', async () => {

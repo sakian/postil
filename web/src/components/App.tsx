@@ -1,13 +1,14 @@
 import { useEffect, useMemo, useState } from 'react';
 import { initToken, setToken } from '../api.ts';
 import { subscribe } from '../events.ts';
-import { markKey, viewedBlob } from '../format.ts';
+import { isYourTurn, markKey, viewedBlob } from '../format.ts';
 import { handleKey, KEYMAP } from '../keyboard.ts';
 import { useStore } from '../store.ts';
 import { DiffPane } from './DiffPane.tsx';
 import { FinishControls, useFinishable } from './Finish.tsx';
 import { Header } from './Header.tsx';
 import { Icon } from './icons.tsx';
+import { Markdown } from './Markdown.tsx';
 import { SidePanel } from './Panels.tsx';
 import { Sidebar } from './Sidebar.tsx';
 
@@ -50,20 +51,51 @@ function StaleBanner() {
 /** Claude finished a review: offer what changed and its replies, until dismissed. */
 function CompletedBanner() {
   const id = useStore((s) => s.completedReview);
+  const summary = useStore((s) => s.reviews.find((r) => r.id === s.completedReview)?.summary);
+  const yourTurn = useStore((s) => s.threads.filter(isYourTurn).length);
   const { setScope, setPanel, dismissCompleted } = useStore.getState();
   if (id === null) return null;
   return (
-    <div className="banner banner-done">
-      <Icon name="check" size={16} />
-      <span>Claude finished review #{id}.</span>
-      <button className="btn btn-small" onClick={() => { void setScope({ kind: 'since_review', review_id: id }); setPanel('threads'); dismissCompleted(); }}>
-        Show changes since review #{id}
-      </button>
-      <button className="btn btn-small" onClick={() => setPanel('threads')}>Open conversations</button>
-      <span className="spacer" />
-      <button className="icon-btn" onClick={dismissCompleted} title="Dismiss"><Icon name="close" size={14} /></button>
+    <div className="banner banner-done banner-your-turn" role="status">
+      <div className="your-turn-head">
+        <Icon name="check" size={18} />
+        <strong>Your turn. Claude finished review #{id}.</strong>
+        {yourTurn > 0 && <span className="muted">{yourTurn} conversation{yourTurn === 1 ? '' : 's'} waiting on you</span>}
+        <span className="spacer" />
+        <button className="icon-btn" onClick={dismissCompleted} title="Dismiss"><Icon name="close" size={14} /></button>
+      </div>
+      {summary && (
+        <div className="history-summary">
+          <span className="avatar avatar-claude" aria-hidden>C</span>
+          <Markdown text={summary} suggestionBase={null} />
+        </div>
+      )}
+      <div className="your-turn-actions">
+        <button className="btn btn-small btn-primary" onClick={() => { void setScope({ kind: 'since_review', review_id: id }); setPanel('threads'); dismissCompleted(); }}>
+          Show changes since review #{id}
+        </button>
+        <button className="btn btn-small" onClick={() => setPanel('threads')}>Open conversations</button>
+      </div>
     </div>
   );
+}
+
+const TITLE = document.title;
+const ICON = document.querySelector<HTMLLinkElement>('link[rel="icon"]')?.href ?? '';
+/** The usual icon with a green dot in the corner. */
+const ICON_YOUR_TURN = ICON.replace(/%3C\/svg%3E$/, "%3Ccircle cx='12.5' cy='12.5' r='3.5' fill='%231f883d' stroke='white'/%3E%3C/svg%3E");
+
+/** Show in the browser tab whether Claude is working or it is the user's turn, for when postil is in the background. */
+function useTabStatus() {
+  const completed = useStore((s) => s.completedReview);
+  const working = useStore((s) => s.reviews.some((r) => r.status === 'in_progress'));
+  const waiting = useStore((s) => s.reviews.some((r) => r.status === 'submitted'));
+  const yourTurn = completed !== null && !working && !waiting;
+  useEffect(() => {
+    document.title = yourTurn ? `● Your turn · ${TITLE}` : working ? `Claude is working… · ${TITLE}` : TITLE;
+    const link = document.querySelector<HTMLLinkElement>('link[rel="icon"]');
+    if (link && ICON) link.href = yourTurn ? ICON_YOUR_TURN : ICON;
+  }, [yourTurn, working]);
 }
 
 /** Every file viewed and nothing left open: offer to end the session cleanly. */
@@ -156,6 +188,7 @@ export function App() {
     return subscribe(token, (e) => useStore.getState().handleEvent(e), (c) => useStore.getState().setConnected(c));
   }, []);
 
+  useTabStatus();
   const [help, setHelp] = useState(false);
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -173,12 +206,14 @@ export function App() {
       <Header />
       <div className="layout">
         <Sidebar />
-        <main className="main">
-          <StaleBanner />
+        <div className="main-col">
           <CompletedBanner />
-          <FinishBanner />
-          <DiffPane />
-        </main>
+          <main className="main">
+            <StaleBanner />
+            <FinishBanner />
+            <DiffPane />
+          </main>
+        </div>
         <SidePanel />
       </div>
       <Toasts />
