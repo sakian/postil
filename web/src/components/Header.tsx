@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import type { Scope } from '../../../src/core/api-types.ts';
 import { api } from '../api.ts';
-import { basename, isYourTurn, shortSha } from '../format.ts';
+import { basename, isYourTurn, relativeTime, shortSha } from '../format.ts';
 import { useStore } from '../store.ts';
 import { CommitPicker } from './CommitPicker.tsx';
 
@@ -19,14 +19,15 @@ function commitsLabel(scope: Extract<Scope, { kind: 'commits' }>): string {
 function ScopePicker() {
   const scope = useStore((s) => s.scope);
   const reviews = useStore((s) => s.reviews);
-  const { setScope } = useStore.getState();
+  const last = useStore((s) => s.history?.last ?? null);
+  const { setScope, refreshHistory } = useStore.getState();
   const [picking, setPicking] = useState(false);
   const submitted = reviews.filter((r) => r.status !== 'draft').sort((a, b) => b.id - a.id);
   const latest = submitted[0];
 
   const onChange = (value: string) => {
     if (value === 'pick') setPicking(true);
-    else if (value === 'all' || value === 'uncommitted') void setScope({ kind: value });
+    else if (value === 'all' || value === 'uncommitted' || value === 'last_session') void setScope({ kind: value });
     else if (value.startsWith('since_review:')) {
       const id = value.split(':')[1];
       void setScope(id === 'latest' ? { kind: 'since_review' } : { kind: 'since_review', review_id: Number(id) });
@@ -34,11 +35,15 @@ function ScopePicker() {
   };
 
   const current = scopeValue(scope);
+  // Reviews in this session, then the last session finished on this branch on any computer.
   const options: Array<[string, string, boolean?]> = [
     ['all', 'All changes'],
     ['uncommitted', 'Uncommitted changes'],
-    ['since_review:latest', latest ? `Changes since last review (#${latest.id})` : 'Changes since last review', !latest],
+    ...(latest ? [['since_review:latest', `Changes since review #${latest.id}`] as [string, string]] : []),
     ...submitted.slice(1, 6).map((r): [string, string] => [`since_review:${r.id}`, `Changes since review #${r.id}`]),
+    ['last_session', last
+      ? `Changes since last finished review (${relativeTime(last.finished_at)} on ${last.host}${last.available ? '' : ', not in this clone'})`
+      : 'Changes since last finished review (none yet)', !last?.available],
   ];
   if (scope.kind === 'commits') options.push(['commits', commitsLabel(scope)]);
   else if (!options.some(([v]) => v === current)) options.push([current, `Changes since review #${scope.kind === 'since_review' ? scope.review_id : ''}`]);
@@ -48,7 +53,8 @@ function ScopePicker() {
     <span className="scope-wrap">
       <label className="scope-picker">
         <span className="sr-only">Changes to show</span>
-        <select value={current} onChange={(e) => onChange(e.target.value)}>
+        {/* Another computer may have finished a review since: the history file can be synced. */}
+        <select value={current} onChange={(e) => onChange(e.target.value)} onFocus={() => void refreshHistory()}>
           {options.map(([value, label, disabled]) => <option key={value} value={value} disabled={disabled}>{label}</option>)}
         </select>
       </label>

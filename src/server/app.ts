@@ -39,6 +39,7 @@ const scopeSchema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('all') }),
   z.object({ kind: z.literal('uncommitted') }),
   z.object({ kind: z.literal('since_review'), review_id: z.number().int().min(1).optional() }),
+  z.object({ kind: z.literal('last_session') }),
   z.object({ kind: z.literal('commits'), from: z.string().min(1), to: z.string().min(1) }),
   z.object({ kind: z.literal('trees'), from: oid, to: oid }),
 ]);
@@ -170,6 +171,7 @@ export function createApp(postil: Postil, opts: AppOptions): Hono {
   app.post('/api/base/reset', async (c) => c.json(await postil.resetBase()));
   app.get('/api/commits', async (c) => c.json(await postil.commits()));
   app.get('/api/branches', async (c) => c.json(await postil.branches()));
+  app.get('/api/history', async (c) => c.json(await postil.historyInfo()));
 
   // -------------------------------------------------------------- diffs
   app.post('/api/diff/resolve', async (c) => {

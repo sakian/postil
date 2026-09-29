@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import type {
-  AnchoredSectionMark, BaseInfo, CommitsInfo, FileChange, FinishOptions, Preferences, Hunk, FileDiff, Health, ResolvedDiff, ReviewView, Scope, Side, ThreadView,
+  AnchoredSectionMark, BaseInfo, CommitsInfo, FileChange, FinishOptions, HistoryInfo, Preferences, Hunk, FileDiff, Health, ResolvedDiff, ReviewView, Scope, Side, ThreadView,
 } from '../../src/core/api-types.ts';
 import { api, ApiError } from './api.ts';
 import { diffKey, markKey, sidePath, viewedBlob } from './format.ts';
@@ -103,8 +103,12 @@ interface State {
   completedReview: number | null;
   /** The user ended the review session: everything resolved and archived. */
   sessionFinished: boolean;
+  /** How many Claude sessions were listening when the user finished; they drop off as they wrap up. */
+  listeningAtFinish: number;
   /** What the user has chosen for Claude to do as the session ends, kept while they review. */
   finishChoices: Required<FinishOptions>;
+  /** The last review session finished on this branch, on any computer, from the shared history file. */
+  history: HistoryInfo | null;
   preferences: Preferences;
 }
 
@@ -117,6 +121,7 @@ interface Actions {
   refreshThreads(): Promise<void>;
   refreshReviews(): Promise<void>;
   refreshMarks(): Promise<void>;
+  refreshHistory(): Promise<void>;
   loadCommits(): Promise<void>;
   refreshSections(): Promise<void>;
   setHunkDone(file: FileChange, hunk: Hunk, done: boolean): Promise<void>;
@@ -184,6 +189,13 @@ function persist(key: string, value: unknown): void {
 
 function errorText(e: unknown): string {
   return e instanceof Error ? e.message : String(e);
+}
+
+/** A session was finished (here or in another tab): the next one starts on all changes. */
+function startFresh(): void {
+  const { scope, setScope, refreshHistory } = useStore.getState();
+  if (scope.kind !== 'all') void setScope({ kind: 'all' });
+  void refreshHistory();
 }
 
 let toastId = 0;
@@ -288,7 +300,9 @@ export const useStore = create<Store>()((set, get) => {
     toasts: [],
     completedReview: null,
     sessionFinished: false,
+    listeningAtFinish: 0,
     finishChoices: { commit: true, push: false, message: '' },
+    history: null,
     preferences: { commit_each_review: false },
 
     async boot() {
@@ -308,7 +322,7 @@ export const useStore = create<Store>()((set, get) => {
           expanded: expanded.value ?? {},
           collapsedDirs: tree.value ?? [],
         });
-        await Promise.all([get().refresh(), get().refreshReviews(), get().refreshMarks()]);
+        await Promise.all([get().refresh(), get().refreshReviews(), get().refreshMarks(), get().refreshHistory()]);
         set({ preferences: await api.preferences() });
       } catch (e) {
         fail(e);
@@ -344,8 +358,12 @@ export const useStore = create<Store>()((set, get) => {
         // Thread and "done" positions depend on the diff, so re-anchor them to the new one.
         await Promise.all([get().refreshThreads(), get().refreshSections()]);
       } catch (e) {
-        if (e instanceof ApiError && e.code === 'no_review' && get().scope.kind === 'since_review') {
+        const gone = e instanceof ApiError && (
+          (e.code === 'no_review' && get().scope.kind === 'since_review') ||
+          ((e.code === 'no_history' || e.code === 'history_unavailable') && get().scope.kind === 'last_session'));
+        if (gone) {
           // The review this scope pointed at is gone or never existed; fall back rather than strand the user.
+          if (e.code === 'history_unavailable') get().toast(e.message);
           set({ scope: { kind: 'all' } });
           persist(PERSISTED.scope, { kind: 'all' });
           return get().refresh();
@@ -373,6 +391,14 @@ export const useStore = create<Store>()((set, get) => {
         set({ reviews, draft });
       } catch (e) {
         fail(e);
+      }
+    },
+
+    async refreshHistory() {
+      try {
+        set({ history: await api.history() });
+      } catch {
+        /* the picker simply offers no "since last finished review" */
       }
     },
 
@@ -737,7 +763,8 @@ export const useStore = create<Store>()((set, get) => {
     async finishSession(opts) {
       try {
         await api.finishSession(opts);
-        set({ sessionFinished: true, panel: null, completedReview: null });
+        set({ sessionFinished: true, listeningAtFinish: get().listening, panel: null, completedReview: null });
+        startFresh();
         await Promise.all([get().refreshThreads(), get().refreshReviews()]);
       } catch (e) {
         fail(e);
@@ -824,7 +851,10 @@ export const useStore = create<Store>()((set, get) => {
           void api.preferences().then((preferences) => set({ preferences }), () => undefined);
           break;
         case 'session.finished':
-          set({ sessionFinished: true });
+          // What Claude was asked to do, which another tab may not have chosen here.
+          if (!s.sessionFinished) set({ sessionFinished: true, listeningAtFinish: s.listening });
+          set({ finishChoices: { commit: e.commit === true, push: e.push === true, message: typeof e.message === 'string' ? e.message : '' } });
+          startFresh();
           void s.refreshThreads();
           void s.refreshReviews();
           break;

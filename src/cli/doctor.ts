@@ -3,6 +3,7 @@ import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { BUNDLED, CLI_ENTRY, DEFAULT_WEB_ROOT, VERSION } from '../core/build-info.ts';
 import { NotRunningError, PostilClient } from '../core/client.ts';
+import { defaultHistoryFile } from '../core/history.ts';
 import { Repo } from '../git/repo.ts';
 
 type Check = { ok: boolean | null; label: string; detail: string };
@@ -36,6 +37,7 @@ export async function doctor(cwd: string): Promise<number> {
     ok: existsSync(join(DEFAULT_WEB_ROOT, 'index.html')), label: 'Browser UI',
     detail: existsSync(join(DEFAULT_WEB_ROOT, 'index.html')) ? DEFAULT_WEB_ROOT : `not built at ${DEFAULT_WEB_ROOT}; run npm run build`,
   });
+  checks.push({ ok: null, label: 'Session history', detail: `${defaultHistoryFile()}${process.env.POSTIL_HISTORY ? ' (POSTIL_HISTORY)' : ''}` });
   checks.push({ ok: null, label: 'postil', detail: `${VERSION}, ${BUNDLED ? 'plugin bundle' : 'source checkout'} (${CLI_ENTRY})` });
 
   const claudeOut = spawnSync('claude', ['--version'], { encoding: 'utf8' });

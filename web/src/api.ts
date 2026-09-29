@@ -1,5 +1,5 @@
 import type {
-  AnchoredSectionMark, AppliedSuggestion, SectionMarkRow, Side, BaseInfo, BranchesInfo, CommitsInfo, FinishOptions, Preferences, FileDiff, FileMarkRow, Health, NewThreadInput, ResolvedDiff, ReviewView, Scope, ThreadView,
+  AnchoredSectionMark, AppliedSuggestion, SectionMarkRow, Side, BaseInfo, BranchesInfo, CommitsInfo, FinishOptions, HistoryInfo, Preferences, FileDiff, FileMarkRow, Health, NewThreadInput, ResolvedDiff, ReviewView, Scope, ThreadView,
 } from '../../src/core/api-types.ts';
 
 const TOKEN_KEY = 'postil.token';
@@ -78,6 +78,7 @@ export const api = {
   base: () => call<BaseInfo>('GET', '/api/base'),
   commits: () => call<CommitsInfo>('GET', '/api/commits'),
   branches: () => call<BranchesInfo>('GET', '/api/branches'),
+  history: () => call<HistoryInfo>('GET', '/api/history'),
   /** Follow the merge base with a branch, or null to go back to the default base. */
   setBaseBranch: (branch: string | null) =>
     branch === null ? call<BaseInfo>('POST', '/api/base/reset') : call<BaseInfo>('PUT', '/api/base', { branch }),

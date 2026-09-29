@@ -156,10 +156,10 @@ export class Store {
     return this.all(`SELECT * FROM review WHERE status IN (${names.join(', ')}) ORDER BY id`, params) as unknown as ReviewRow[];
   }
 
-  /** The most recent review that has been submitted, whatever its later status. */
+  /** The most recent review submitted in this session (not archived), whatever its later status. */
   latestSubmittedReview(): ReviewRow | null {
     return (
-      (this.one("SELECT * FROM review WHERE status != 'draft' ORDER BY submitted_at DESC, id DESC LIMIT 1") as unknown as
+      (this.one("SELECT * FROM review WHERE status != 'draft' AND archived_at IS NULL ORDER BY submitted_at DESC, id DESC LIMIT 1") as unknown as
         | ReviewRow
         | undefined) ?? null
     );
@@ -415,10 +415,15 @@ export class Store {
         { summary, now },
       ).changes;
       const finished = this.run("UPDATE review SET archived_at = :now WHERE archived_at IS NULL", { now }).changes;
-      this.run('DELETE FROM file_mark');
-      this.run('DELETE FROM section_mark');
+      this.clearMarks();
       return { threads, reviews: discarded + finished, drafts };
     });
+  }
+
+  /** Forget every viewed and done mark. */
+  clearMarks(): void {
+    this.run('DELETE FROM file_mark');
+    this.run('DELETE FROM section_mark');
   }
 
   /** Trees still needed: by live threads, live reviews, and the latest review (for "since last review"). */

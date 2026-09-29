@@ -509,6 +509,9 @@ kbd { font: 12px var(--mono); padding: 1px 6px; border: 1px solid var(--border);
 @media (prefers-color-scheme: dark) { .banner-done { background: rgba(46, 160, 67, 0.15); color: #3fb950; border-color: rgba(46, 160, 67, 0.4); } }
 .modal.finished { padding: 28px 28px 22px; text-align: center; position: relative; z-index: 1; }
 .modal.finished h2 { margin: 10px 0 6px; font-size: 20px; }
+.finished-status { display: flex; align-items: center; justify-content: center; gap: 8px; margin: 14px 0; }
+.finished-actions { display: flex; align-items: center; justify-content: center; gap: 8px; flex-wrap: wrap; }
+.banner .pulse { flex: none; }
 .finished-mark {
   display: inline-flex; width: 56px; height: 56px; border-radius: 50%; align-items: center; justify-content: center;
   background: var(--primary); color: #fff; animation: pop 0.4s ease-out;

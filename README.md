@@ -59,7 +59,9 @@ Claude is listening.
 
 When every file is viewed and every conversation resolved, **Finish session** archives the
 conversations and tells Claude to stop listening, and can have it commit anything left and push,
-or do whatever you type for it instead. If a review has nothing to say, **Finish review**
+or do whatever you type for it instead. Once Claude has wrapped up and stopped listening, the page
+says you can close the tab. Each session stands alone: the next one opens on all changes with
+nothing marked viewed. If a review has nothing to say, **Finish review**
 offers to finish the session straight away. To have Claude commit its changes after each review instead (never pushing), tick that option
 under **Finish review**.
 
@@ -80,8 +82,14 @@ everything since postil was first used in the repository. `postil base --branch 
 from where your branch left `<b>`, following it as a pull request would; `postil base <rev>`
 measures from a fixed commit; `postil base --empty` puts every file in the repository under
 review; and `postil base --reset` goes back to the default.
-The scope menu in the UI also offers uncommitted changes, changes since your last review, and any
-range of commits.
+The scope menu in the UI also offers uncommitted changes, changes since each review in this
+session, changes since the last session you finished on this branch, and any range of commits.
+
+Finishing a session appends a line to `~/.postil/history.jsonl` (or `$POSTIL_HISTORY`): the
+repository's origin URL, the branch, and the id of the tree you reviewed. Tree ids are content
+hashes, so another clone, on another computer, can show what changed since as long as it has that
+content, for example because Claude committed and pushed it and you fetched. Point
+`POSTIL_HISTORY` at a synced folder to share it between computers.
 
 postil keeps its state (reviews, comments, the server's address and token) in `.git/postil/`
 and pins the snapshots it needs under `refs/postil/`. It adds nothing to your working tree, and
@@ -97,8 +105,9 @@ Other commands: `postil start`, `stop`, `status`, `open`, `url`, `base`, `archiv
 - Comments on any line range, sent as a review. Claude replies in each thread and may flag one
   as needing your decision; only you resolve threads.
 - Suggestions in comments apply with one click, or Claude can apply them.
-- Review all changes, uncommitted changes, changes since your last review, or any range of
-  commits. Files updated since your last review are marked.
+- Review all changes, uncommitted changes, changes since a review or since the last finished
+  session (even one finished in another clone), or any range of commits. Files updated since your
+  last review are marked.
 - Comments follow their code as it moves. Comments on code that changed are marked outdated and
   show what changed.
 - Mark files viewed or individual sections done. Marks stay through edits elsewhere in the file.
@@ -117,7 +126,8 @@ Other commands: `postil start`, `stop`, `status`, `open`, `url`, `base`, `archiv
 - postil is installed from a checkout. It is not yet published to npm or a hosted plugin
   marketplace.
 - Tested on Linux and Windows.
-- Everything is local: reviews live in one clone and are not shared between machines.
+- Reviews and conversations live in one clone and are not shared between machines. Only the
+  history of finished sessions can be, through `POSTIL_HISTORY`.
 
 ## Development
 

@@ -10,14 +10,15 @@ import type { FileChange, Hunk } from '../git/types.ts';
 import { reanchor, type Anchor } from './anchors.ts';
 import { extractSuggestion, hasSuggestion, replaceLines } from './suggestion.ts';
 import { EventBus } from './events.ts';
+import { defaultHistoryFile, History, normalizeRemote } from './history.ts';
 import { agentHint } from './hints.ts';
 
 export { agentHint } from './hints.ts';
 import { HttpError } from './util.ts';
 
 import type {
-  AgentReview, AgentThread, AppliedSuggestion, BaseConfig, BaseInfo, BranchesInfo, CommentView, FinishOptions, Preferences, CommitsInfo, Endpoint, FileDiff, HookStatus, ListenResult,
-  NewThreadInput, ResolvedScope, ReviewView, Scope, ThreadView,
+  AgentReview, AgentThread, AppliedSuggestion, BaseConfig, BaseInfo, BranchesInfo, CommentView, FinishOptions, Preferences, CommitsInfo, Endpoint, FileDiff, HistoryInfo, HookStatus,
+  LastSession, ListenResult, NewThreadInput, ResolvedScope, ReviewView, Scope, ThreadView,
 } from './api-types.ts';
 
 export type * from './api-types.ts';
@@ -62,6 +63,8 @@ export class Postil {
   readonly repo: Repo;
   readonly store: Store;
   readonly bus: EventBus;
+  readonly history: History;
+  private identity: Promise<string | null> | undefined;
   private lastLiveTree: string | null = null;
   /** Zero-context hunks between two blobs, and renames between two trees. Both are immutable, so cached. */
   private readonly lineMaps = new Map<string, Hunk[]>();
@@ -69,16 +72,17 @@ export class Postil {
   /** Open agent event sockets per Claude session: a session is "live" while its monitor is armed. */
   private readonly liveAgents = new Map<string, number>();
 
-  constructor(repo: Repo, store: Store, bus: EventBus = new EventBus()) {
+  constructor(repo: Repo, store: Store, bus: EventBus = new EventBus(), history = new History(defaultHistoryFile())) {
     this.repo = repo;
     this.store = store;
     this.bus = bus;
+    this.history = history;
   }
 
-  static async open(cwd: string, bus?: EventBus): Promise<Postil> {
+  static async open(cwd: string, bus?: EventBus, history?: History): Promise<Postil> {
     const repo = await Repo.open(cwd);
     const store = new Store(join(repo.stateDir, 'postil.db'));
-    const postil = new Postil(repo, store, bus);
+    const postil = new Postil(repo, store, bus, history);
     await postil.ensureBase();
     return postil;
   }
@@ -249,6 +253,18 @@ export class Postil {
         return {
           scope,
           from: { tree: review.submit_tree, commit: null, label: `review #${review.id} submitted`, live: false },
+          to: await this.liveEndpoint(),
+        };
+      }
+      case 'last_session': {
+        const last = await this.lastSession();
+        if (!last) throw new HttpError(404, 'no review session has been finished on this branch yet', 'no_history');
+        if (!last.available) {
+          throw new HttpError(404, `the last review (finished on ${last.host}) covered tree ${short(last.tree)}, which this clone does not have; fetch the commit it was pushed in`, 'history_unavailable');
+        }
+        return {
+          scope,
+          from: { tree: last.tree, commit: null, label: `last review (${last.finished_at.slice(0, 10)}, ${last.host})`, live: false },
           to: await this.liveEndpoint(),
         };
       }
@@ -958,6 +974,34 @@ export class Postil {
     this.bus.emit({ type: 'marks.changed' });
   }
 
+  // ------------------------------------------------------------------ history
+
+  /** This repository's identity in the history file; null when it has neither a remote nor a commit. */
+  private repoIdentity(): Promise<string | null> {
+    this.identity ??= this.repo.identity().then((id) => (!id ? null : 'remote' in id ? normalizeRemote(id.remote) : `root:${id.root}`));
+    return this.identity;
+  }
+
+  async lastSession(): Promise<LastSession | null> {
+    const [repo, branch] = await Promise.all([this.repoIdentity(), this.repo.currentBranch()]);
+    const entry = repo ? await this.history.latest(repo, branch) : null;
+    if (!entry) return null;
+    const available = (await this.repo.objectType(entry.tree).catch(() => null)) === 'tree';
+    return { branch: entry.branch, tree: entry.tree, head: entry.head, finished_at: entry.finished_at, host: entry.host, available };
+  }
+
+  async historyInfo(): Promise<HistoryInfo> {
+    return { file: this.history.file, last: await this.lastSession() };
+  }
+
+  /** Trees the history file names for this repository that are pinned here: the latest per branch. */
+  private async historyTrees(): Promise<Set<string>> {
+    const repo = await this.repoIdentity();
+    const latest = new Map<string | null, string>();
+    for (const e of repo ? await this.history.entries(repo).catch(() => []) : []) latest.set(e.branch, e.tree);
+    return new Set(latest.values());
+  }
+
   // ------------------------------------------------------------------ archive and prune
 
   /** Archive resolved conversations and finished reviews, then release what they pinned. */
@@ -1006,7 +1050,20 @@ export class Postil {
     if (open || pending || active) {
       throw new HttpError(409, 'resolve every conversation and let Claude finish before ending the session', 'not_finished');
     }
+    // Record what was reviewed, so a later session on any computer can show only what changed
+    // since. The history file is a convenience: failing to write it must not block finishing.
+    const repo = await this.repoIdentity();
+    if (repo) {
+      const tree = await this.snapshot('finish');
+      const [branch, head] = await Promise.all([this.repo.currentBranch(), this.repo.head()]);
+      await this.history.append({ repo, branch, tree, head, finished_at: new Date().toISOString() })
+        .catch((e: unknown) => console.error(`postil: could not write ${this.history.file}: ${(e as Error).message}`));
+    }
     const archived = await this.archiveResolved();
+    // Each session stands alone: the next one starts on all changes with nothing viewed.
+    this.store.clearMarks();
+    this.store.deleteUiState('scope');
+    this.bus.emit({ type: 'marks.changed' });
     // Claude does any committing and pushing the user asked for, then stops listening.
     // The user's own instructions replace the commit and push options.
     const message = opts.message?.trim();
@@ -1021,7 +1078,7 @@ export class Postil {
    * pins under refs/postil/ are touched.
    */
   async prune(): Promise<{ unpinned: number }> {
-    const trees = this.store.treesInUse();
+    const trees = new Set([...this.store.treesInUse(), ...(await this.historyTrees())]);
     const blobs = this.store.blobsInUse();
     let unpinned = 0;
     for (const tree of await this.repo.pinnedTrees()) {

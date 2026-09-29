@@ -3,6 +3,9 @@ import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync, unlinkSync
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 
+// Finishing a session appends to the history file, which defaults to one in the home directory.
+process.env.POSTIL_HISTORY = join(mkdtempSync(join(tmpdir(), 'postil-history-')), 'history.jsonl');
+
 export interface Fixture {
   dir: string;
   git(...args: string[]): string;

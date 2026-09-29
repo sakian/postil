@@ -212,8 +212,12 @@ describe('the reviewing workflow', { timeout: 180_000 }, () => {
     await finish.getByRole('button', { name: 'Finish session' }).click();
     const done = page.getByRole('dialog', { name: 'Review finished' });
     await done.waitFor();
+    await done.getByText('You can close this tab.').waitFor();
+    assert.equal(await done.getByText(/Claude has wrapped up/).count(), 0, 'no Claude was listening to wrap up');
     await page.screenshot({ path: `${SHOTS}20-finished.png` });
-    await done.getByRole('button', { name: 'Done' }).click();
+    await done.getByRole('button', { name: 'Keep browsing' }).click();
+    await page.locator('.banner-done', { hasText: 'You can close this tab' }).waitFor();
+    assert.match(await page.title(), /Finished, close this tab/);
     assert.deepEqual((await api<{ threads: unknown[] }>('GET', '/api/threads')).threads, [], 'everything archived');
     assert.ok(questionId > 0);
   });
@@ -267,9 +271,17 @@ describe('a review with nothing to say', { timeout: 60_000 }, () => {
     await panel.getByPlaceholder('Overall comment').fill('');
 
     await panel.getByRole('button', { name: 'Finish session' }).click();
-    await page.getByRole('dialog', { name: 'Review finished' }).waitFor();
+    const done = page.getByRole('dialog', { name: 'Review finished' });
+    await done.waitFor();
     await until(() => heard.some((e) => e.type === 'session.finished'), 'Claude to hear the session finish');
     assert.deepEqual(heard.find((e) => e.type === 'session.finished'),
       { type: 'session.finished', commit: false, push: false, message: 'Squash it all into one commit and open a PR' });
+
+    // Claude works through the instructions while it still listens, then stops its monitor.
+    await done.getByText('Claude is following your instructions').waitFor();
+    assert.equal(await done.getByRole('button', { name: 'Close tab' }).count(), 0, 'not yet');
+    claude.close();
+    await done.getByText('Claude has wrapped up and stopped listening. You can close this tab.').waitFor();
+    await done.getByRole('button', { name: 'Close tab' }).waitFor();
   });
 });

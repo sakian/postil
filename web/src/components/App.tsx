@@ -90,12 +90,53 @@ function useTabStatus() {
   const completed = useStore((s) => s.completedReview);
   const working = useStore((s) => s.reviews.some((r) => r.status === 'in_progress'));
   const waiting = useStore((s) => s.reviews.some((r) => r.status === 'submitted'));
+  const wrap = useWrapUp();
   const yourTurn = completed !== null && !working && !waiting;
   useEffect(() => {
-    document.title = yourTurn ? `● Your turn · ${TITLE}` : working ? `Claude is working… · ${TITLE}` : TITLE;
+    document.title = wrap === 'wrapping' ? `Claude is wrapping up… · ${TITLE}`
+      : wrap === 'done' ? `✓ Finished, close this tab · ${TITLE}`
+      : yourTurn ? `● Your turn · ${TITLE}` : working ? `Claude is working… · ${TITLE}` : TITLE;
     const link = document.querySelector<HTMLLinkElement>('link[rel="icon"]');
-    if (link && ICON) link.href = yourTurn ? ICON_YOUR_TURN : ICON;
-  }, [yourTurn, working]);
+    if (link && ICON) link.href = yourTurn && !wrap ? ICON_YOUR_TURN : ICON;
+  }, [yourTurn, working, wrap]);
+}
+
+/**
+ * After the session is finished: Claude is still committing or pushing while it listens, and once
+ * it stops listening there is nothing left for this tab to do. Null when no session is finished, or
+ * the user has started a new review in this tab.
+ */
+function useWrapUp(): 'wrapping' | 'done' | null {
+  const finished = useStore((s) => s.sessionFinished);
+  const listening = useStore((s) => s.listening);
+  const busyAgain = useStore((s) => (s.draft?.comment_count ?? 0) > 0 || s.threads.some((t) => t.status === 'open'));
+  if (!finished || busyAgain) return null;
+  return listening > 0 ? 'wrapping' : 'done';
+}
+
+/** Scripts may only close tabs they opened, so say so when the browser refuses. */
+function CloseTab({ primary }: { primary?: boolean }) {
+  const [refused, setRefused] = useState(false);
+  const close = () => {
+    window.close();
+    setTimeout(() => setRefused(true), 300);
+  };
+  return refused
+    ? <span className="muted">Your browser keeps this tab open; close it yourself ({navigator.platform.startsWith('Mac') ? '⌘' : 'Ctrl'}+W).</span>
+    : <button className={`btn${primary ? ' btn-primary' : ' btn-small'}`} onClick={close}>Close tab</button>;
+}
+
+/** The dialog is gone but the session is over: keep saying the tab can go. */
+function WrapUpBanner() {
+  const wrap = useWrapUp();
+  if (!wrap) return null;
+  return (
+    <div className="banner banner-done" role="status">
+      {wrap === 'wrapping'
+        ? <><span className="pulse" /> <span>Review finished. Claude is wrapping up…</span></>
+        : <><Icon name="check" size={16} /> <span>Review finished. You can close this tab.</span> <CloseTab /></>}
+    </div>
+  );
 }
 
 /** Every file viewed and nothing left open: offer to end the session cleanly. */
@@ -123,9 +164,13 @@ function Finished() {
   const finished = useStore((s) => s.sessionFinished);
   const files = useStore((s) => s.resolved?.files.length ?? 0);
   const reviews = useStore((s) => s.reviews.filter((r) => r.status !== 'draft').length);
+  const told = useStore((s) => s.listeningAtFinish > 0);
+  const { commit, push, message } = useStore((s) => s.finishChoices);
+  const wrap = useWrapUp();
   const [open, setOpen] = useState(true);
   useEffect(() => { if (finished) setOpen(true); }, [finished]);
   if (!finished || !open) return null;
+  const doing = message.trim() ? 'following your instructions' : commit && push ? 'committing and pushing' : commit ? 'committing' : 'wrapping up';
   return (
     <div className="modal-backdrop" onClick={() => setOpen(false)}>
       <div className="confetti" aria-hidden>
@@ -138,9 +183,19 @@ function Finished() {
         <h2>Review complete</h2>
         <p className="muted">
           {files} file{files === 1 ? '' : 's'} reviewed{reviews ? ` over ${reviews} review${reviews === 1 ? '' : 's'}` : ''}. Every conversation is
-          resolved and archived, and any listening Claude session has been told to wrap up.
+          resolved and archived.
         </p>
-        <button className="btn btn-primary" onClick={() => setOpen(false)}>Done</button>
+        {wrap === 'wrapping' ? (
+          <p className="finished-status"><span className="pulse" /> Claude is {doing}. This updates when it stops listening.</p>
+        ) : (
+          <p className="finished-status">
+            <strong>{told ? 'Claude has wrapped up and stopped listening. ' : ''}You can close this tab.</strong>
+          </p>
+        )}
+        <div className="finished-actions">
+          {wrap !== 'wrapping' && <CloseTab primary />}
+          <button className={`btn${wrap === 'wrapping' ? ' btn-primary' : ''}`} onClick={() => setOpen(false)}>Keep browsing</button>
+        </div>
       </div>
     </div>
   );
@@ -208,6 +263,7 @@ export function App() {
         <Sidebar />
         <div className="main-col">
           <CompletedBanner />
+          <WrapUpBanner />
           <main className="main">
             <StaleBanner />
             <FinishBanner />

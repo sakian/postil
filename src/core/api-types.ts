@@ -35,6 +35,8 @@ export type Scope =
   | { kind: 'all' }
   | { kind: 'uncommitted' }
   | { kind: 'since_review'; review_id?: number }
+  /** Since the last session finished on this branch, per the history file shared across clones. */
+  | { kind: 'last_session' }
   | { kind: 'commits'; from: string; to: string }
   | { kind: 'trees'; from: string; to: string };
 
@@ -157,6 +159,23 @@ export interface Preferences {
 }
 
 /** What Claude should do as the session ends. */
+/** The last review session finished on this branch, on this or another computer. */
+export interface LastSession {
+  branch: string | null;
+  tree: string;
+  head: string | null;
+  finished_at: string;
+  host: string;
+  /** False when this clone lacks the tree, e.g. it was never committed, or not yet fetched. */
+  available: boolean;
+}
+
+export interface HistoryInfo {
+  /** The history file, so the user can share it between computers. */
+  file: string;
+  last: LastSession | null;
+}
+
 export interface FinishOptions {
   /** Commit anything not yet committed. */
   commit?: boolean;

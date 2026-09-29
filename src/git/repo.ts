@@ -149,6 +149,18 @@ export class Repo {
     }
   }
 
+  /**
+   * What identifies this repository on any computer: origin's URL (normalized by the caller), or
+   * without a remote the oldest root commit. Null for a repository with neither.
+   */
+  async identity(): Promise<{ remote: string } | { root: string } | null> {
+    const remote = await gitLine(this.root, ['config', '--get', 'remote.origin.url'], { okCodes: [1] });
+    if (remote) return { remote };
+    const roots = await gitText(this.root, ['rev-list', '--max-parents=0', 'HEAD'], { okCodes: [128] }); // 128: no commits yet
+    const root = roots.split('\n').filter((l) => l !== '').sort()[0];
+    return root ? { root } : null;
+  }
+
   async mergeBase(a: string, b: string): Promise<string | null> {
     return gitLine(this.root, ['merge-base', assertRev(a), assertRev(b)], { okCodes: [1] });
   }

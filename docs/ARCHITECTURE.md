@@ -62,6 +62,18 @@ snapshots cannot capture it:
 | `.git/postil/worktree.index` | The private index used for snapshots |
 | `refs/postil/<worktree>/…` | Refs that keep snapshot trees, file versions and a fixed base alive through `git gc` |
 
+One file lives outside the repository: the history of finished sessions, `~/.postil/history.jsonl`
+or `$POSTIL_HISTORY`. **Finish session** snapshots the working tree and appends a JSON line naming
+the repository (origin's URL normalized so SSH and HTTPS clones agree, or the root commit without
+a remote), the branch, the tree, the time and the host. "Since last finished review" diffs from the
+newest entry for the current branch. Tree ids are content hashes, so an entry written by another
+clone works wherever that tree exists, usually because the reviewed state was committed, pushed and
+fetched; otherwise the UI says the clone lacks it. The file is append-only, so copies synced
+between computers merge by concatenation. The newest tree per branch stays pinned through pruning.
+
+Finishing also clears viewed and done marks and the saved scope, so each session starts on all
+changes with nothing viewed.
+
 Linked worktrees share the repository's refs, so each worktree has its own ref namespace. Pruning
 one worktree's archive cannot release snapshots another still needs.
 
@@ -153,7 +165,9 @@ The doorbell frame carries the whole procedure for handling a review, so a long 
 text was compacted away still knows what to do when woken.
 
 **Finish session** in the UI sends `session.finished`, optionally asking Claude to commit what is
-left and push. Claude does so, stops its monitor and does not re-arm. Claude never commits or pushes
+left and push. Claude does so, stops its monitor and does not re-arm. The page watches the count of
+listening sessions: while it is above zero Claude is still wrapping up, and when it reaches zero the
+page tells the user the tab can be closed. Claude never commits or pushes
 otherwise, unless the user asks, or ticks the option for Claude to commit (never push) after each
 review.
 
