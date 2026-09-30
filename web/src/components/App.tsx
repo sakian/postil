@@ -38,8 +38,10 @@ function KeyHelp({ onClose }: { onClose(): void }) {
 function StaleBanner() {
   const stale = useStore((s) => s.stale);
   const resolving = useStore((s) => s.resolving);
+  // Mid-review, Claude is still writing: a refresh would show half-made changes. Offer it once Claude is done.
+  const working = useStore((s) => s.reviews.some((r) => r.status === 'in_progress'));
   const { refresh } = useStore.getState();
-  if (!stale) return null;
+  if (!stale || working) return null;
   return (
     <div className="banner">
       Files changed on disk since this diff was loaded. Your view stays put until you refresh.

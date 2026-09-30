@@ -103,6 +103,24 @@ describe('the reviewing workflow', { timeout: 180_000 }, () => {
     assert.ok(Math.abs(await offset('pkg/f10.ts')) < 40, `f10 is at the top (off by ${await offset('pkg/f10.ts')}px)`);
   });
 
+  it('opens conversations on "Your turn", and keeps typing in the reply box you clicked', async () => {
+    await show('pkg/f02.ts');
+    await file('pkg/f02.ts').locator('.thread', { hasText: 'Why "five"?' }).waitFor();
+    await page.getByRole('button', { name: /Conversations/ }).click();
+    const panel = page.locator('.side-panel');
+    await panel.locator('.panel-filters button.active', { hasText: 'Your turn' }).waitFor();
+    const thread = panel.locator('.thread', { has: page.locator('.thread-loc', { hasText: 'pkg/f02.ts' }) });
+    await thread.locator('.thread-head').click();
+    await thread.locator('.reply-stub').click();
+    // The same reply shows in the diff as soon as there is text; it must not take the focus.
+    await page.keyboard.type('abc');
+    assert.equal(await thread.locator('textarea').inputValue(), 'abc');
+    assert.equal(await thread.locator('textarea').evaluate((el) => el === document.activeElement), true);
+    await thread.locator('textarea').fill('');
+    await thread.getByRole('button', { name: 'Cancel' }).click();
+    await page.keyboard.press('Escape');
+  });
+
   it('stops asking for your turn once you have replied, even before submitting', async () => {
     await show('pkg/f02.ts');
     const thread = file('pkg/f02.ts').locator('.thread', { hasText: 'Why "five"?' });

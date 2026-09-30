@@ -310,6 +310,7 @@ code, pre { font-family: var(--mono); }
 .thread-diff.muted { padding: 6px 10px; }
 .change-toggle .link-btn.active { font-weight: 600; text-decoration: underline; }
 .thread-loc { font-size: 12px; }
+.thread-num { color: var(--fg-muted); font-variant-numeric: tabular-nums; }
 .thread-body { border-top: 1px solid var(--border-muted); }
 .anchor-snippet {
   margin: 8px 12px 0; padding: 6px 10px; background: var(--bg-subtle); border-left: 3px solid #bc4c00;

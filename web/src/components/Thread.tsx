@@ -46,7 +46,10 @@ export function Composer({ draftKey, initial = '', placeholder, submitLabel, see
   const ref = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => {
-    if (autoFocus) ref.current?.focus();
+    const el = ref.current;
+    if (!autoFocus || !el) return;
+    el.focus();
+    el.setSelectionRange(el.value.length, el.value.length);
   }, [autoFocus]);
 
   const submit = async () => {
@@ -173,7 +176,7 @@ function Comment({ comment, thread }: { comment: CommentView; thread: ThreadView
         )}
       </div>
       {editing ? (
-        <Composer draftKey={`edit:${comment.id}`} initial={comment.body} autoFocus placeholder="Edit comment" submitLabel="Update comment"
+        <Composer draftKey={`edit:${comment.id}`} initial={comment.body} autoFocus={editingNow} placeholder="Edit comment" submitLabel="Update comment"
           seed={suggestionBase} onSubmit={async (b) => { await editComment(comment.id, b); setEditing(false); }}
           onCancel={() => setEditing(false)} onRestore={() => setEditing(true)} />
       ) : (
@@ -229,7 +232,8 @@ export function ThreadWidget({ thread, showLocation = false, defaultOpen }: {
   const [open, setOpen] = useState(defaultOpen ?? thread.status !== 'resolved');
   const replyKey = `reply:${thread.id}`;
   const [replyingNow, setReplying] = useState(false);
-  // Unsent reply text keeps the composer open, across remounts and after "Undo".
+  // Unsent reply text keeps the composer open, across remounts and after "Undo". The same thread can
+  // show in the diff and the conversations list at once; only the copy the user opened takes focus.
   const replying = useStore((s) => s.composerText[replyKey] !== undefined) || replyingNow;
   const [showChange, setShowChange] = useState(false);
   const [diffView, setDiffView] = useState<'original' | 'current' | null>(null);
@@ -254,6 +258,7 @@ export function ThreadWidget({ thread, showLocation = false, defaultOpen }: {
       <div className="thread-head" onClick={() => setOpen((o) => !o)} role="button" aria-expanded={open}>
         <div className="thread-head-line">
           <Icon name={open ? 'chevronDown' : 'chevronRight'} size={14} />
+          <span className="thread-num" title="Claude refers to conversations by this number">#{thread.id}</span>
           {showLocation && <code className="thread-loc">{thread.anchor?.path ?? thread.path}:{lineLabel(thread)}</code>}
           {!showLocation && (
             <span className="muted" title={moved ? `Written on ${thread.start_line === thread.end_line ? `line ${thread.start_line}` : `lines ${thread.start_line}–${thread.end_line}`}; the code has moved` : undefined}>
@@ -296,7 +301,7 @@ export function ThreadWidget({ thread, showLocation = false, defaultOpen }: {
           {thread.comments.map((c) => <Comment key={c.id} comment={c} thread={thread} />)}
           <div className="thread-actions">
             {replying ? (
-              <Composer draftKey={replyKey} autoFocus placeholder="Reply" submitLabel="Add reply"
+              <Composer draftKey={replyKey} autoFocus={replyingNow} placeholder="Reply" submitLabel="Add reply"
                 seed={thread.side === 'new' && thread.start_line !== null ? thread.anchor_text : null}
                 onSubmit={async (b) => { await reply(thread.id, b); setReplying(false); }}
                 onCancel={() => setReplying(false)} onRestore={() => { setOpen(true); setReplying(true); }} />

@@ -23,7 +23,12 @@ const FILTERS: Array<[Filter, string, (t: ThreadView) => boolean]> = [
 function ThreadsPanel() {
   const threads = useStore((s) => s.threads);
   const resolved = useStore((s) => s.resolved);
-  const [filter, setFilter] = useState<Filter>('open');
+  const completed = useStore((s) => s.completedReview);
+  // Claude's replies are what the user comes here for, once there are any.
+  const [filter, setFilter] = useState<Filter>(() => (threads.some(isYourTurn) ? 'yours' : 'open'));
+  useEffect(() => {
+    if (completed !== null) setFilter('yours');
+  }, [completed]);
   const { focus } = useStore.getState();
 
   const [archived, setArchived] = useState<ThreadView[] | null>(null);
