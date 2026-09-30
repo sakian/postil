@@ -14,7 +14,8 @@ const paths: Record<string, string> = {
   folder: 'M2 4h4l1.5 1.5H14V13H2z',
   close: 'M4 4l8 8M12 4l-8 8',
   refresh: 'M13 8a5 5 0 1 1-1.5-3.5M13 3v2.5h-2.5',
-  unfold: 'M8 2v4M5 4l3 2 3-2M8 14v-4M5 12l3-2 3 2M2 8h12',
+  // Arrows pointing away from the line (unfold) or toward it (fold).
+  unfold: 'M8 2v4M5 5l3-3 3 3M8 14v-4M5 11l3 3 3-3M2 8h12',
   fold: 'M8 2v4M5 3l3 3 3-3M8 14v-4M5 13l3-3 3 3M2 8h12',
 };
 
