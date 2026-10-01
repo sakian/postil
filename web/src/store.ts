@@ -191,11 +191,18 @@ function errorText(e: unknown): string {
   return e instanceof Error ? e.message : String(e);
 }
 
-/** A session was finished (here or in another tab): the next one starts on all changes. */
+/** What a review opens on: the changes since the last finished review when there is one to diff from, else all changes. */
+function defaultScope(history: HistoryInfo | null): Scope {
+  return history?.last?.available ? { kind: 'last_session' } : { kind: 'all' };
+}
+
+/** A session was finished (here or in another tab): the next one starts from the one just finished. */
 function startFresh(): void {
-  const { scope, setScope, refreshHistory } = useStore.getState();
-  if (scope.kind !== 'all') void setScope({ kind: 'all' });
-  void refreshHistory();
+  void useStore.getState().refreshHistory().then(() => {
+    const { scope, setScope, history } = useStore.getState();
+    const next = defaultScope(history);
+    if (scope.kind !== next.kind) void setScope(next);
+  });
 }
 
 let toastId = 0;
@@ -307,22 +314,24 @@ export const useStore = create<Store>()((set, get) => {
 
     async boot() {
       try {
-        const [health, view, scope, expanded, tree] = await Promise.all([
+        const [health, view, scope, expanded, tree, history] = await Promise.all([
           api.health(),
           api.uiState<ViewMode>(PERSISTED.view),
           api.uiState<Scope>(PERSISTED.scope),
           api.uiState<Record<string, Range[]>>(PERSISTED.expanded),
           api.uiState<string[]>(PERSISTED.tree),
+          api.history().catch(() => null),
         ]);
         set({
           health,
           listening: health.listening,
           view: view.value ?? 'unified',
-          scope: scope.value ?? { kind: 'all' },
+          scope: scope.value ?? defaultScope(history),
+          history,
           expanded: expanded.value ?? {},
           collapsedDirs: tree.value ?? [],
         });
-        await Promise.all([get().refresh(), get().refreshReviews(), get().refreshMarks(), get().refreshHistory()]);
+        await Promise.all([get().refresh(), get().refreshReviews(), get().refreshMarks()]);
         set({ preferences: await api.preferences() });
       } catch (e) {
         fail(e);

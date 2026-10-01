@@ -226,21 +226,56 @@ describe('the reviewing workflow', { timeout: 180_000 }, () => {
     await until(async () => (await page.locator('.tree-file.is-viewed').count()) === 0, 'every file in pkg to be unviewed');
   });
 
-  it('finishes the session once everything is reviewed and resolved', async () => {
-    // Claude answers the pending comments, the user resolves everything and views every file.
+  it('opens the next conversation when the one you were on is handled', async () => {
+    const diff = await api<ResolvedDiff>('POST', '/api/diff/resolve', { scope: { kind: 'all' } });
+    for (const path of ['pkg/f07.ts', 'pkg/f08.ts']) {
+      await api('POST', '/api/threads', {
+        from_tree: diff.from.tree, to_tree: diff.to.tree, path, side: 'new', start_line: 60, end_line: 60, body: `Why "sixty" in ${path}?`,
+      });
+    }
     const review = await api<{ id: number }>('POST', '/api/reviews/submit', { body: '' });
     const { threads } = await api<{ threads: Array<{ id: number }> }>('GET', `/api/agent/reviews/${review.id}`);
-    for (const t of threads) await api('POST', `/api/agent/threads/${t.id}/reply`, { body: 'Done.' });
-    await api('POST', `/api/agent/reviews/${review.id}/complete`, { summary: 'All handled.' });
+    for (const t of threads) await api('POST', `/api/agent/threads/${t.id}/reply`, { body: 'It matches the spec.' });
+    await api('POST', `/api/agent/reviews/${review.id}/complete`, { summary: 'Answered.' });
+
+    // The submission also carries the earlier pending reply, so Claude answers that one too.
+    await page.getByRole('button', { name: /Conversations/ }).click();
+    const items = page.locator('.side-panel .thread');
+    await until(async () => (await items.count()) === threads.length, 'every answered conversation waiting on you');
+    assert.ok(threads.length >= 2);
+    assert.equal(await page.locator('.side-panel .thread:not(.is-collapsed)').count(), 0, 'they start collapsed');
+    await items.first().locator('.thread-head').click();
+    for (let left = threads.length; left > 0; left--) {
+      await items.first().locator('.thread-body').waitFor(); // opened by hand, then by itself
+      await items.first().getByRole('button', { name: 'Resolve conversation' }).click();
+      await until(async () => (await items.count()) === left - 1, 'the resolved one to leave the list');
+    }
+    await page.keyboard.press('Escape');
+  });
+
+  it('finishes the session once everything is reviewed and resolved', async () => {
+    // Claude answers any pending comments, the user resolves everything and views every file.
+    const { draft } = await api<{ draft: { comment_count: number } | null }>('GET', '/api/reviews/draft');
+    if (draft?.comment_count) {
+      const review = await api<{ id: number }>('POST', '/api/reviews/submit', { body: '' });
+      const { threads } = await api<{ threads: Array<{ id: number }> }>('GET', `/api/agent/reviews/${review.id}`);
+      for (const t of threads) await api('POST', `/api/agent/threads/${t.id}/reply`, { body: 'Done.' });
+      await api('POST', `/api/agent/reviews/${review.id}/complete`, { summary: 'All handled.' });
+    }
     const all = await api<{ threads: ThreadView[] }>('GET', '/api/threads');
     for (const t of all.threads) await api('POST', `/api/threads/${t.id}/resolve`);
     const diff = await api<ResolvedDiff>('POST', '/api/diff/resolve', { scope: { kind: 'all' } });
     for (const f of diff.files) await api('PUT', '/api/marks/files', { path: f.path, blob: f.new_blob, viewed: true });
 
     await page.locator('.banner-done', { hasText: 'Claude finished review' }).getByTitle('Dismiss').click();
-    const finish = page.locator('.banner-done', { hasText: 'Every file is viewed' });
-    await finish.waitFor();
+    // The banner points to the panel, where finishing lives.
+    const banner = page.locator('.banner-done', { hasText: 'Every file is viewed' });
+    await banner.getByRole('button', { name: 'Finish review…' }).click();
+    await until(async () => (await banner.count()) === 0, 'the banner to give way to the panel');
+    const finish = page.locator('.review-panel');
+    await finish.getByRole('heading', { name: 'Finish the session' }).waitFor();
     assert.equal(await finish.locator('.option').count(), 0, 'no commit options without a listening Claude to act on them');
+    assert.equal(await finish.locator('textarea').count(), 0, 'no overall comment box until asked for');
     // With reduced motion the confetti still shows, fading in place rather than falling.
     await page.emulateMedia({ reducedMotion: 'reduce' });
     await finish.getByRole('button', { name: 'Finish session' }).click();
@@ -256,6 +291,10 @@ describe('the reviewing workflow', { timeout: 180_000 }, () => {
     await page.screenshot({ path: `${SHOTS}20-finished.png` });
     await done.getByRole('button', { name: 'Keep browsing' }).click();
     await page.locator('.banner-done', { hasText: 'You can close this tab' }).waitFor();
+    await page.locator('.topbar').getByRole('button', { name: 'Close tab' }).waitFor();
+    // The next session opens on what changed after this one.
+    await until(async () => (await page.locator('.scope-picker select').inputValue()) === 'last_session', 'the view to start from this session');
+    assert.equal(await page.locator('.topbar').getByRole('button', { name: /Finish review/ }).count(), 0, 'nothing left to finish');
     assert.match(await page.title(), /Finished, close this tab/);
     assert.deepEqual((await api<{ threads: unknown[] }>('GET', '/api/threads')).threads, [], 'everything archived');
     assert.ok(questionId > 0);
@@ -300,14 +339,19 @@ describe('a review with nothing to say', { timeout: 60_000 }, () => {
     const panel = page.locator('.review-panel');
     await panel.getByText('Nothing to send Claude').waitFor();
     assert.equal(await panel.getByRole('button', { name: 'Submit review' }).count(), 0, 'no dead submit button');
+    assert.equal(await panel.locator('textarea').count(), 0, 'no text boxes until asked for');
     await panel.locator('.option', { hasText: 'and push' }).click();
+    await panel.getByRole('button', { name: 'Tell Claude something else…' }).click();
+    assert.equal(await panel.locator('.option').count(), 0, 'the message replaces the options');
+    assert.ok(await panel.getByRole('button', { name: 'Finish session' }).isDisabled(), 'nothing to tell Claude yet');
     await panel.getByRole('textbox', { name: 'Message to Claude' }).fill('Squash it all into one commit and open a PR');
-    assert.ok(await panel.getByRole('checkbox', { name: 'and push' }).isDisabled(), 'the message replaces the options');
     await page.screenshot({ path: `${SHOTS}24-finish-first-pass.png` });
 
+    // An overall comment turns finishing into a review to submit, and back.
+    await panel.getByRole('button', { name: 'send Claude a comment' }).click();
     await panel.getByPlaceholder('Overall comment').fill('One thing');
     await panel.getByRole('button', { name: 'Submit review' }).waitFor();
-    await panel.getByPlaceholder('Overall comment').fill('');
+    await panel.getByRole('button', { name: 'Remove overall comment' }).click();
 
     await panel.getByRole('button', { name: 'Finish session' }).click();
     const done = page.getByRole('dialog', { name: 'Review finished' });

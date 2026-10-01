@@ -222,12 +222,16 @@ function WhatChanged({ before, after }: { before: string; after: string }) {
   );
 }
 
-export function ThreadWidget({ thread, showLocation = false, defaultOpen }: {
+export function ThreadWidget({ thread, showLocation = false, defaultOpen, autoOpen, onToggle }: {
   thread: ThreadView;
   /** Show the file and lines in the head, and offer the original and current diff (the conversations list). */
   showLocation?: boolean;
   /** Start expanded or not; by default open unless resolved. */
   defaultOpen?: boolean;
+  /** Expand now, when this turns true. */
+  autoOpen?: boolean;
+  /** The user expanded or collapsed it. */
+  onToggle?(open: boolean): void;
 }) {
   const [open, setOpen] = useState(defaultOpen ?? thread.status !== 'resolved');
   const replyKey = `reply:${thread.id}`;
@@ -245,6 +249,7 @@ export function ThreadWidget({ thread, showLocation = false, defaultOpen }: {
   const last = thread.comments.at(-1);
 
   useEffect(() => setOpen(defaultOpen ?? thread.status !== 'resolved'), [thread.status, defaultOpen]);
+  useEffect(() => { if (autoOpen) setOpen(true); }, [autoOpen]);
   useEffect(() => {
     if (!focused) return;
     setOpen(true);
@@ -255,7 +260,7 @@ export function ThreadWidget({ thread, showLocation = false, defaultOpen }: {
 
   return (
     <div ref={ref} id={`thread-${thread.id}`} className={`thread${thread.status === 'resolved' ? ' is-resolved' : ''}${focused ? ' is-focused' : ''}${open ? '' : ' is-collapsed'}`}>
-      <div className="thread-head" onClick={() => setOpen((o) => !o)} role="button" aria-expanded={open}>
+      <div className="thread-head" onClick={() => { setOpen(!open); onToggle?.(!open); }} role="button" aria-expanded={open}>
         <div className="thread-head-line">
           <Icon name={open ? 'chevronDown' : 'chevronRight'} size={14} />
           <span className="thread-num" title="Claude refers to conversations by this number">#{thread.id}</span>

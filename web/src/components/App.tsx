@@ -5,7 +5,7 @@ import { isYourTurn, markKey, viewedBlob } from '../format.ts';
 import { handleKey, KEYMAP } from '../keyboard.ts';
 import { useStore } from '../store.ts';
 import { DiffPane } from './DiffPane.tsx';
-import { FinishControls, useFinishable } from './Finish.tsx';
+import { CloseTab, useFinishable, useWrapUp } from './Finish.tsx';
 import { Header } from './Header.tsx';
 import { Icon } from './icons.tsx';
 import { Markdown } from './Markdown.tsx';
@@ -103,31 +103,6 @@ function useTabStatus() {
   }, [yourTurn, working, wrap]);
 }
 
-/**
- * After the session is finished: Claude is still committing or pushing while it listens, and once
- * it stops listening there is nothing left for this tab to do. Null when no session is finished, or
- * the user has started a new review in this tab.
- */
-function useWrapUp(): 'wrapping' | 'done' | null {
-  const finished = useStore((s) => s.sessionFinished);
-  const listening = useStore((s) => s.listening);
-  const busyAgain = useStore((s) => (s.draft?.comment_count ?? 0) > 0 || s.threads.some((t) => t.status === 'open'));
-  if (!finished || busyAgain) return null;
-  return listening > 0 ? 'wrapping' : 'done';
-}
-
-/** Scripts may only close tabs they opened, so say so when the browser refuses. */
-function CloseTab({ primary }: { primary?: boolean }) {
-  const [refused, setRefused] = useState(false);
-  const close = () => {
-    window.close();
-    setTimeout(() => setRefused(true), 300);
-  };
-  return refused
-    ? <span className="muted">Your browser keeps this tab open; close it yourself ({navigator.platform.startsWith('Mac') ? '⌘' : 'Ctrl'}+W).</span>
-    : <button className={`btn${primary ? ' btn-primary' : ' btn-small'}`} onClick={close}>Close tab</button>;
-}
-
 /** The dialog is gone but the session is over: keep saying the tab can go. */
 function WrapUpBanner() {
   const wrap = useWrapUp();
@@ -136,26 +111,28 @@ function WrapUpBanner() {
     <div className="banner banner-done" role="status">
       {wrap === 'wrapping'
         ? <><span className="pulse" /> <span>Review finished. Claude is wrapping up…</span></>
-        : <><Icon name="check" size={16} /> <span>Review finished. You can close this tab.</span> <CloseTab /></>}
+        : <><Icon name="check" size={16} /> <span>Review finished. You can close this tab.</span> <CloseTab small /></>}
     </div>
   );
 }
 
-/** Every file viewed and nothing left open: offer to end the session cleanly. */
+/** Every file viewed and nothing left open: point to finishing, which lives in the "Finish review" panel. */
 function FinishBanner() {
   const files = useStore((s) => s.resolved?.files);
   const viewed = useStore((s) => s.viewed);
+  const panelOpen = useStore((s) => s.panel === 'review');
+  const { setPanel } = useStore.getState();
   const finishable = useFinishable();
   const allViewed = useMemo(() => !!files?.length && files.every((f) => {
     const b = viewedBlob(f);
     return b !== null && viewed.has(markKey(f.path, b));
   }), [files, viewed]);
-  if (!finishable || !allViewed) return null;
+  if (!finishable || !allViewed || panelOpen) return null;
   return (
     <div className="banner banner-done">
       <Icon name="check" size={16} />
       <span>Every file is viewed and every conversation resolved.</span>
-      <FinishControls />
+      <button className="btn btn-small btn-primary" onClick={() => setPanel('review')}>Finish review…</button>
     </div>
   );
 }

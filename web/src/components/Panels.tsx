@@ -40,6 +40,24 @@ function ThreadsPanel() {
   const counts = useMemo(() => Object.fromEntries(FILTERS.map(([k, , fn]) => [k, threads.filter(fn).length])), [threads]);
   const shown = filter === 'archived' ? (archived ?? []) : threads.filter(FILTERS.find(([k]) => k === filter)![2]);
 
+  // Handling the conversation the user opened (replying, resolving) takes it out of the list; open the
+  // one that moves up into its place, so working down the list takes no extra clicks.
+  const active = useRef<number | null>(null);
+  const [next, setNext] = useState<number | null>(null);
+  const ids = shown.map((t) => t.id);
+  const before = useRef(ids);
+  const idsKey = ids.join(',');
+  useEffect(() => {
+    const was = before.current;
+    before.current = ids;
+    const a = active.current;
+    if (a === null || ids.includes(a) || !was.includes(a)) return;
+    const after = was.slice(was.indexOf(a) + 1).find((id) => ids.includes(id)) ?? null;
+    active.current = after;
+    setNext(after);
+  }, [idsKey]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { active.current = null; }, [filter]);
+
   return (
     <>
       <div className="panel-filters">
@@ -62,7 +80,8 @@ function ThreadsPanel() {
           const where = placement(t, resolved ? threadFile(t, resolved.files) : undefined);
           return (
             <div key={t.id} className="panel-item">
-              <ThreadWidget thread={t} showLocation defaultOpen={false} />
+              <ThreadWidget thread={t} showLocation defaultOpen={false} autoOpen={t.id === next}
+                onToggle={(open) => { if (open) active.current = t.id; else if (active.current === t.id) active.current = null; }} />
               <div className="panel-item-actions">
                 {where === 'elsewhere'
                   ? <span className="muted" title="This file is not part of the current view">Not in view</span>
@@ -84,6 +103,7 @@ function ReviewPanel() {
   const { setDraftBody, submit, focus, setPreferences, resetReviews } = useStore.getState();
   const [body, setBody] = useState(draft?.body ?? '');
   const [busy, setBusy] = useState(false);
+  const [writingOverall, setWritingOverall] = useState(false);
   const save = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 
   useEffect(() => setBody((b) => (b === '' ? (draft?.body ?? '') : b)), [draft?.body]);
@@ -108,6 +128,7 @@ function ReviewPanel() {
     try {
       await submit(body);
       setBody('');
+      setWritingOverall(false);
     } catch {
       /* reported by the store */
     } finally {
@@ -115,40 +136,57 @@ function ReviewPanel() {
     }
   };
 
+  // The overall comment is rarely needed, so it waits behind a link unless it has text.
+  const overall = writingOverall || body.trim() !== '';
+  const overallLink = (label: string) => <button className="link-btn" onClick={() => setWritingOverall(true)}>{label}</button>;
+
   return (
     <div className="review-panel">
-      <section>
-        <h3>Your review</h3>
-        <p className="muted">
-          {pendingCount === 0 ? 'No pending comments.' : `${pendingCount} pending comment${pendingCount === 1 ? '' : 's'}`} Claude sees
-          nothing until you submit.
-        </p>
-        {pendingThreads.length > 0 && (
-          <ul className="pending-list">
-            {pendingThreads.map((t) => (
-              <li key={t.id}>
-                <button className="link-btn" onClick={() => focus(t.id)}>{t.path}:{lineLabel(t)}</button>
-                <span className="muted"> {snippet(t.comments.find((c) => c.draft)?.body ?? '', 80)}</span>
-              </li>
-            ))}
-          </ul>
-        )}
-        <textarea value={body} onChange={(e) => onBody(e.target.value)} rows={4} placeholder="Overall comment for this review (optional)" />
-        <label className="option" title="Claude commits what it changes for each review, one logical change per commit, and leaves pushing to you">
-          <input type="checkbox" checked={commitEach} onChange={(e) => void setPreferences({ commit_each_review: e.target.checked })} />
-          Claude commits its changes after each review (never pushes)
-        </label>
-        {nothingToSend && finishable ? (
-          <div className="finish-here">
-            <p className="muted">Nothing to send Claude. If the changes look right, finish the session.</p>
-            <FinishControls />
-          </div>
-        ) : (
-          <button className="btn btn-primary btn-block" disabled={!canSubmit} onClick={() => void doSubmit()}>
-            {busy ? 'Submitting…' : 'Submit review'}
-          </button>
-        )}
-      </section>
+      {nothingToSend && finishable && !overall ? (
+        <section>
+          <h3>Finish the session</h3>
+          <p className="muted">Nothing to send Claude. If the changes look right, finish the session.</p>
+          <FinishControls />
+          <p className="muted">Or {overallLink('send Claude a comment')} to keep going.</p>
+        </section>
+      ) : (
+        <section>
+          <h3>Your review</h3>
+          <p className="muted">
+            {pendingCount === 0
+              ? <>No pending comments. Comment on the code, or {overallLink('add an overall comment')}.</>
+              : `${pendingCount} pending comment${pendingCount === 1 ? '' : 's'}. Claude sees nothing until you submit.`}
+          </p>
+          {pendingThreads.length > 0 && (
+            <ul className="pending-list">
+              {pendingThreads.map((t) => (
+                <li key={t.id}>
+                  <button className="link-btn" onClick={() => focus(t.id)}>{t.path}:{lineLabel(t)}</button>
+                  <span className="muted"> {snippet(t.comments.find((c) => c.draft)?.body ?? '', 80)}</span>
+                </li>
+              ))}
+            </ul>
+          )}
+          {overall ? (
+            <>
+              <textarea value={body} onChange={(e) => onBody(e.target.value)} rows={4} autoFocus={writingOverall}
+                placeholder="Overall comment for this review" />
+              <button className="link-btn" onClick={() => { onBody(''); setWritingOverall(false); }}>Remove overall comment</button>
+            </>
+          ) : pendingCount > 0 && <p>{overallLink('Add an overall comment')}</p>}
+          {!nothingToSend && (
+            <>
+              <label className="option" title="Claude commits what it changes for each review, one logical change per commit, and leaves pushing to you">
+                <input type="checkbox" checked={commitEach} onChange={(e) => void setPreferences({ commit_each_review: e.target.checked })} />
+                Claude commits its changes after each review (never pushes)
+              </label>
+              <button className="btn btn-primary btn-block" disabled={!canSubmit} onClick={() => void doSubmit()}>
+                {busy ? 'Submitting…' : 'Submit review'}
+              </button>
+            </>
+          )}
+        </section>
+      )}
       {history.length > 0 && (
         <section>
           <h3>Previous reviews</h3>

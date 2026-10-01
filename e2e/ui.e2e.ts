@@ -163,6 +163,7 @@ describe('postil UI', { timeout: 120_000 }, () => {
     const panel = page.locator('.review-panel');
     await panel.waitFor();
     assert.match(await panel.innerText(), /2 pending comments/);
+    await panel.getByRole('button', { name: 'Add an overall comment' }).click();
     await panel.locator('textarea').fill('Nice work. Two questions.');
     await shot('05-review-panel');
     await panel.getByRole('button', { name: 'Submit review' }).click();

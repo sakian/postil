@@ -4,6 +4,7 @@ import { api } from '../api.ts';
 import { basename, isYourTurn, relativeTime, shortSha } from '../format.ts';
 import { useStore } from '../store.ts';
 import { CommitPicker } from './CommitPicker.tsx';
+import { CloseTab, useWrapUp } from './Finish.tsx';
 
 function scopeValue(scope: Scope): string {
   if (scope.kind === 'since_review') return `since_review:${scope.review_id ?? 'latest'}`;
@@ -138,6 +139,7 @@ export function Header() {
   const threads = useStore((s) => s.threads);
   const { setView, setPanel } = useStore.getState();
   const yourTurn = threads.filter(isYourTurn).length;
+  const wrap = useWrapUp();
   const pending = draft?.comment_count ?? 0;
 
   return (
@@ -155,9 +157,14 @@ export function Header() {
       <button className={`btn${panel === 'threads' ? ' active' : ''}`} onClick={() => setPanel(panel === 'threads' ? null : 'threads')}>
         Conversations{yourTurn > 0 && <span className="count">{yourTurn}</span>}
       </button>
-      <button className={`btn btn-primary${panel === 'review' ? ' active' : ''}`} onClick={() => setPanel(panel === 'review' ? null : 'review')}>
-        Finish review{pending > 0 && <span className="count">{pending}</span>}
-      </button>
+      {/* Once the session is finished there is no review left to finish: the tab is done once Claude is. */}
+      {wrap === 'done' ? <CloseTab primary /> : wrap === 'wrapping' ? (
+        <button className="btn btn-primary" disabled title="Claude is wrapping up the finished review">Finish review</button>
+      ) : (
+        <button className={`btn btn-primary${panel === 'review' ? ' active' : ''}`} onClick={() => setPanel(panel === 'review' ? null : 'review')}>
+          Finish review{pending > 0 && <span className="count">{pending}</span>}
+        </button>
+      )}
       <button className="icon-btn help-btn" title="Keyboard shortcuts (?)" onClick={() => window.dispatchEvent(new KeyboardEvent('keydown', { key: '?' }))}>?</button>
       <span className={`conn ${connected ? 'on' : 'off'}`} title={connected ? 'Live updates connected' : 'Reconnecting to the postil server…'} />
     </header>
