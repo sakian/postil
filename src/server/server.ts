@@ -8,6 +8,7 @@ import { DEFAULT_WEB_ROOT } from '../core/build-info.ts';
 import { EventBus } from '../core/events.ts';
 import { Postil } from '../core/postil.ts';
 import { nowIso } from '../core/util.ts';
+import { BUILD } from '../core/build-info.ts';
 import { VERSION } from '../core/version.ts';
 import { gitIdle } from '../git/exec.ts';
 import { createApp } from './app.ts';
@@ -93,7 +94,7 @@ export async function startServer(opts: ServeOptions): Promise<RunningServer> {
 
     const url = `http://127.0.0.1:${port}`;
     const info: ServerInfo = {
-      pid: process.pid, port, url, token, root: postil.repo.root, version: VERSION, started_at: nowIso(),
+      pid: process.pid, port, url, token, root: postil.repo.root, version: VERSION, build: BUILD, started_at: nowIso(),
     };
     await writeServerInfo(stateDir, info);
     await rememberPort(stateDir, port);

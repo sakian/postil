@@ -1,6 +1,7 @@
 import { randomBytes } from 'node:crypto';
 import { open, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import type { Build } from './build-info.ts';
 
 /**
  * How clients find a running server. Everything lives in the repository's postil state
@@ -14,6 +15,8 @@ export interface ServerInfo {
   token: string;
   root: string;
   version: string;
+  /** The bundle the server runs; absent from source, and from servers older than this field. */
+  build?: Build | null;
   started_at: string;
 }
 

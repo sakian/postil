@@ -6,7 +6,8 @@
  *   npm run build   (builds the UI first, then this)
  */
 import { build } from 'esbuild';
-import { cpSync, existsSync, mkdirSync, readFileSync, rmSync, statSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
@@ -14,6 +15,17 @@ const out = `${root}plugin/dist`;
 const { version } = JSON.parse(readFileSync(`${root}package.json`, 'utf8')) as { version: string };
 
 if (!existsSync(`${root}web/dist/index.html`)) throw new Error('build the UI first: vite build --config web/vite.config.ts');
+// The same sources and UI give the same id, so rebuilding unchanged code does not count as new.
+const hash = createHash('sha256');
+for (const dir of ['src', 'web/dist']) {
+  for (const file of (readdirSync(`${root}${dir}`, { recursive: true }) as string[]).filter((f) => !f.endsWith('.map')).sort()) {
+    const path = `${root}${dir}/${file}`;
+    if (statSync(path).isFile()) hash.update(`${dir}/${file.replaceAll('\\', '/')}\0`).update(readFileSync(path)).update('\0');
+  }
+}
+hash.update(readFileSync(`${root}package-lock.json`));
+const buildInfo = { id: hash.digest('hex').slice(0, 16), at: new Date().toISOString() };
+
 rmSync(out, { recursive: true, force: true });
 mkdirSync(out, { recursive: true });
 
@@ -26,7 +38,7 @@ await build({
   target: 'node24',
   minify: false,
   legalComments: 'none',
-  define: { __POSTIL_BUNDLE__: 'true', __POSTIL_VERSION__: JSON.stringify(version) },
+  define: { __POSTIL_BUNDLE__: 'true', __POSTIL_VERSION__: JSON.stringify(version), __POSTIL_BUILD__: JSON.stringify(buildInfo) },
   // ws speeds itself up with these native modules when present, and works without them.
   external: ['bufferutil', 'utf-8-validate'],
   banner: {

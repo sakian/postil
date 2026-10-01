@@ -43,9 +43,15 @@ export function createMcpServer(env: { projectDir: string; session: string | und
       inputSchema: { start: z.boolean().optional().describe('Start the server if it is not running (default true).') },
     },
     async ({ start }) => {
+      let note: string | null = null;
       if (start !== false) {
         try {
-          await startDaemon(env.projectDir);
+          const started = await startDaemon(env.projectDir);
+          if (started.restarted) note = 'Restarted the review server, which was running an older build of postil. Tell the user to reload the review tab.';
+          if (started.outdated) {
+            note = 'The review server runs an older build of postil. It was left running because a review is waiting or in progress; ' +
+              'it is restarted on the next connect once that review is complete.';
+          }
         } catch (e) {
           return failure(`postil: could not start the review server: ${e instanceof Error ? e.message : String(e)}`);
         }
@@ -68,6 +74,7 @@ export function createMcpServer(env: { projectDir: string; session: string | und
         return text(
           [
             `postil is running for ${client.info.root}.`,
+            ...(note ? [note] : []),
             `Review UI (for the user): ${client.uiUrl}`,
             '',
             'To be woken when the user submits a review, arm the Monitor tool with:',

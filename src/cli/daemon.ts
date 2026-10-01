@@ -2,9 +2,9 @@ import { spawn } from 'node:child_process';
 import { lstat, mkdir, open, readFile, readlink, realpath, symlink, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { delimiter, join, resolve } from 'node:path';
-import { CLI_ENTRY } from '../core/build-info.ts';
+import { BUILD, CLI_ENTRY } from '../core/build-info.ts';
 import { NotRunningError, PostilClient } from '../core/client.ts';
-import { pidAlive, probe } from '../core/discovery.ts';
+import { pidAlive, probe, type ServerInfo } from '../core/discovery.ts';
 import { Repo } from '../git/repo.ts';
 
 const MAIN = CLI_ENTRY;
@@ -18,15 +18,39 @@ async function tryConnect(cwd: string): Promise<PostilClient | null> {
   }
 }
 
+/** A running server built before this one: it keeps the code it started with across rebuilds and updates. */
+function olderBuild(info: ServerInfo): boolean {
+  if (!BUILD || info.build?.id === BUILD.id) return false;
+  return !info.build || info.build.at < BUILD.at;
+}
+
+export interface Started {
+  client: PostilClient;
+  started: boolean;
+  log: string;
+  /** The server was running an older build of postil and was restarted on this one. */
+  restarted?: boolean;
+  /** The server runs an older build, but a review is waiting or in progress, so it was left running. */
+  outdated?: boolean;
+}
+
 /**
  * Start the server in the background, or report the one already running. Its output goes to
- * the repository's postil state directory, so nothing appears in the working tree.
+ * the repository's postil state directory, so nothing appears in the working tree. A server on an
+ * older build is replaced, unless Claude has a review to finish on it.
  */
-export async function startDaemon(cwd: string, port?: number): Promise<{ client: PostilClient; started: boolean; log: string }> {
+export async function startDaemon(cwd: string, port?: number): Promise<Started> {
   const repo = await Repo.open(cwd);
   const log = join(repo.stateDir, 'server.log');
   const running = await tryConnect(cwd);
-  if (running) return { client: running, started: false, log };
+  let restarted = false;
+  if (running) {
+    if (!olderBuild(running.info)) return { client: running, started: false, log };
+    const { reviews } = await running.request<{ reviews: unknown[] }>('GET', '/api/agent/pending');
+    if (reviews.length > 0) return { client: running, started: false, log, outdated: true };
+    await stopDaemon(cwd);
+    restarted = true;
+  }
 
   await mkdir(repo.stateDir, { recursive: true });
   const out = await open(log, 'a', 0o600);
@@ -43,7 +67,7 @@ export async function startDaemon(cwd: string, port?: number): Promise<{ client:
   while (Date.now() < deadline) {
     await new Promise((r) => setTimeout(r, 150));
     const client = await tryConnect(cwd);
-    if (client) return { client, started: true, log };
+    if (client) return { client, started: true, log, ...(restarted && { restarted }) };
     if (child.exitCode !== null) break;
   }
   const tail = (await readFile(log, 'utf8').catch(() => '')).trim().split('\n').slice(-8).join('\n');

@@ -96,8 +96,9 @@ async function main(argv: string[]): Promise<number> {
       return serve(cwd, parsePort(values.port));
     case 'start': {
       const { startDaemon } = await import('./daemon.ts');
-      const { client, started } = await startDaemon(cwd, parsePort(values.port));
-      console.log(`postil ${started ? 'started' : 'is already running'} for ${client.info.root}`);
+      const { client, started, restarted, outdated } = await startDaemon(cwd, parsePort(values.port));
+      console.log(`postil ${restarted ? 'restarted on this build' : started ? 'started' : 'is already running'} for ${client.info.root}`);
+      if (outdated) console.log('  It runs an older build. Restart it once Claude finishes the review in progress: postil stop && postil start');
       console.log(`  UI: ${client.uiUrl}`);
       return 0;
     }
