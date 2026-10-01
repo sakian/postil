@@ -526,8 +526,14 @@ kbd { font: 12px var(--mono); padding: 1px 6px; border: 1px solid var(--border);
 @keyframes confetti-fall {
   to { transform: translateY(105vh) rotate(540deg); opacity: 0; }
 }
+/* Reduced motion: the confetti appears scattered and fades where it is, instead of falling. */
+@keyframes confetti-fade {
+  from { opacity: 0; }
+  20% { opacity: 0.9; }
+  to { opacity: 0; }
+}
 @media (prefers-reduced-motion: reduce) {
-  .confetti { display: none; }
+  .confetti span { top: var(--rest-y); transform: rotate(var(--rest-turn)); animation: confetti-fade 3s ease-out forwards; }
   .finished-mark { animation: none; }
 }
 .finish-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; flex: 1; }

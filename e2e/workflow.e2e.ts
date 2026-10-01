@@ -241,9 +241,16 @@ describe('the reviewing workflow', { timeout: 180_000 }, () => {
     const finish = page.locator('.banner-done', { hasText: 'Every file is viewed' });
     await finish.waitFor();
     assert.equal(await finish.locator('.option').count(), 0, 'no commit options without a listening Claude to act on them');
+    // With reduced motion the confetti still shows, fading in place rather than falling.
+    await page.emulateMedia({ reducedMotion: 'reduce' });
     await finish.getByRole('button', { name: 'Finish session' }).click();
     const done = page.getByRole('dialog', { name: 'Review finished' });
     await done.waitFor();
+    const piece = page.locator('.confetti span').first();
+    assert.equal(await piece.evaluate((el) => getComputedStyle(el).animationName), 'confetti-fade');
+    await page.waitForTimeout(700);
+    await page.screenshot({ path: `${SHOTS}20-finished-reduced-motion.png` });
+    await page.emulateMedia({ reducedMotion: 'no-preference' });
     await done.getByText('You can close this tab.').waitFor();
     assert.equal(await done.getByText(/Claude has wrapped up/).count(), 0, 'no Claude was listening to wrap up');
     await page.screenshot({ path: `${SHOTS}20-finished.png` });

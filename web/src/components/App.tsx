@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, type CSSProperties } from 'react';
 import { initToken, setToken } from '../api.ts';
 import { subscribe } from '../events.ts';
 import { isYourTurn, markKey, viewedBlob } from '../format.ts';
@@ -177,7 +177,11 @@ function Finished() {
     <div className="modal-backdrop" onClick={() => setOpen(false)}>
       <div className="confetti" aria-hidden>
         {Array.from({ length: 40 }, (_, i) => (
-          <span key={i} style={{ left: `${(i * 37) % 100}%`, background: CONFETTI[i % CONFETTI.length], animationDelay: `${(i % 10) * 0.08}s` }} />
+          <span key={i} style={{
+            left: `${(i * 37) % 100}%`, background: CONFETTI[i % CONFETTI.length], animationDelay: `${(i % 10) * 0.08}s`,
+            // Where each piece rests when it fades in place instead of falling (reduced motion).
+            '--rest-y': `${4 + ((i * 53) % 88)}%`, '--rest-turn': `${(i * 47) % 180}deg`,
+          } as CSSProperties} />
         ))}
       </div>
       <div className="modal finished" role="dialog" aria-label="Review finished" onClick={(e) => e.stopPropagation()}>
