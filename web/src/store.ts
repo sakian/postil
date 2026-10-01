@@ -72,8 +72,8 @@ interface State {
   threads: ThreadView[];
   /** "Done" marks, anchored to the diff being viewed. */
   sections: AnchoredSectionMark[];
-  /** Done hunks the user unfolded this session, by `diffKey#hunk`. */
-  unfoldedDone: Record<string, true>;
+  /** Done hunks the user unfolded (true) or folded (false) this session, by `diffKey#hunk`. */
+  unfoldedDone: Record<string, boolean>;
   commits: Loadable<CommitsInfo> | null;
   reviews: ReviewView[];
   draft: ReviewView | null;
@@ -457,10 +457,7 @@ export const useStore = create<Store>()((set, get) => {
     },
 
     setDoneUnfolded(key, unfolded) {
-      set((s) => {
-        const { [key]: _drop, ...rest } = s.unfoldedDone;
-        return { unfoldedDone: unfolded ? { ...rest, [key]: true } : rest };
-      });
+      set((s) => ({ unfoldedDone: { ...s.unfoldedDone, [key]: unfolded } }));
     },
 
     async loadCommits() {

@@ -153,6 +153,20 @@ describe('the reviewing workflow', { timeout: 180_000 }, () => {
     await until(async () => (await f.locator('.done-toggle.on').count()) === 0, 'every section to be not done again');
   });
 
+  it('opens a viewed file again with its sections unfolded, each still foldable', async () => {
+    await show('pkg/f03.ts');
+    const f = file('pkg/f03.ts');
+    await f.locator('[data-action="viewed"]').check();
+    await until(async () => (await f.locator('table.diff').count()) === 0, 'the viewed file to fold');
+    await f.locator('[data-action="fold"]').click();
+    await until(async () => (await f.locator('.done-toggle.on').count()) === 2, 'both sections to show as done');
+    assert.equal(await f.locator('.done-row').count(), 0);
+    await f.locator('.done-controls').first().getByRole('button', { name: 'Fold' }).click();
+    await until(async () => (await f.locator('.done-row').count()) === 1, 'the folded section to fold');
+    await f.locator('[data-action="viewed"]').uncheck(); // later tests count the files left to view
+    await until(async () => (await f.locator('.done-toggle.on').count()) === 0, 'every section to be not done again');
+  });
+
   it('keeps the page on a file folded from the middle of it', async () => {
     await show('pkg/f04.ts');
     const f = file('pkg/f04.ts');

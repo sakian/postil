@@ -4,7 +4,7 @@ import { normalize, type Range } from '../lib/ranges.ts';
 import { buildRows, EXPAND_STEP, foldDone, gaps, oldToNewInGaps, toSplit, type Row, type SplitRow } from '../lib/rows.ts';
 import { hunkDone, validMarks } from '../lib/sections.ts';
 import { isSelected, splitSelection, unifiedSelection, type Selection } from '../lib/selection.ts';
-import { currentLines, diffKey, sidePath } from '../format.ts';
+import { currentLines, diffKey, markKey, sidePath, viewedBlob } from '../format.ts';
 import { renderEmphasis, renderTokens, type Token } from '../highlight/index.tsx';
 import { wordHighlights, type Span } from '../lib/worddiff.ts';
 import { useStore, type Target } from '../store.ts';
@@ -31,15 +31,18 @@ export function DiffTable({ file, diff, threads }: Props) {
   const composer = useStore((s) => (s.composer?.path === file.path ? s.composer : null));
   const sections = useStore((s) => s.sections);
   const unfoldedDone = useStore((s) => s.unfoldedDone);
+  const viewedBlobId = viewedBlob(file);
+  const viewed = useStore((s) => (viewedBlobId ? s.viewed.has(markKey(file.path, viewedBlobId)) : false));
   const { expand, collapse, select, openComposer, loadLines, setHunkDone, setDoneUnfolded } = useStore.getState();
   const key = diffKey(file);
 
-  // Hunks marked done fold to one line unless the user unfolded them this session.
+  // Hunks marked done fold to one line unless the user unfolded them this session. A viewed file
+  // the user opens again is being looked at again, so its sections start unfolded.
   const marks = useMemo(() => validMarks(sections, file), [sections, file]);
   const done = useMemo(() => diff.hunks.map((h) => hunkDone(h, marks)), [diff, marks]);
   const folded = useMemo(
-    () => new Set(done.flatMap((d, i) => (d && !unfoldedDone[`${key}#${i}`] ? [i] : []))),
-    [done, unfoldedDone, key],
+    () => new Set(done.flatMap((d, i) => (d && !(unfoldedDone[`${key}#${i}`] ?? viewed) ? [i] : []))),
+    [done, unfoldedDone, key, viewed],
   );
 
   const newLines = linesState?.state === 'ready' ? linesState.value : null;
