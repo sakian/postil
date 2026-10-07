@@ -454,6 +454,9 @@ code, pre { font-family: var(--mono); }
 /* A section's own controls sit at the end of its first line; the code wraps around them. */
 .section-controls { margin-left: 8px; user-select: none; }
 .section-check { width: 15px; height: 15px; margin: 2px 0; accent-color: var(--primary); cursor: pointer; }
+/* Sections still to review stay findable but quiet, until you point at their first line. */
+.section-check:not(:checked) { opacity: 0.35; transition: opacity 0.12s; }
+.line:hover .section-check, .section-check:focus-visible { opacity: 1; }
 .chip-sections { background: var(--bg-inset); }
 .chip-sections.all { background: #dafbe1; color: #1a7f37; }
 @media (prefers-color-scheme: dark) { .chip-sections.all { background: rgba(46, 160, 67, 0.2); color: #3fb950; } }
