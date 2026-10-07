@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import type {
-  AnchoredSectionMark, BaseInfo, CommitsInfo, FileChange, FinishOptions, HistoryInfo, Preferences, Hunk, FileDiff, Health, ResolvedDiff, ReviewView, Scope, Side, ThreadView,
+  AnchoredSectionMark, BaseInfo, CommitsInfo, FileChange, FinishOptions, HistoryInfo, Preferences, FileDiff, Health, ResolvedDiff, ReviewView, Scope, Side, ThreadView,
 } from '../../src/core/api-types.ts';
 import { api, ApiError } from './api.ts';
 import { diffKey, markKey, sidePath, viewedBlob } from './format.ts';
@@ -8,7 +8,7 @@ import { highlight, MAX_HIGHLIGHT_LINES, type Token } from './highlight/index.ts
 import { withExpanded } from './lib/expanded.ts';
 import { add, removeOverlapping, type Range } from './lib/ranges.ts';
 import { notePin } from './lib/pin.ts';
-import { hunkDone, hunkRanges, marksOverlapping, validMarks } from './lib/sections.ts';
+import { fileSections, sectionDone, sectionRanges, unmarkPlan, validMarks, type Section } from './lib/sections.ts';
 
 export type ViewMode = 'unified' | 'split';
 export type Panel = 'threads' | 'review' | null;
@@ -124,9 +124,10 @@ interface Actions {
   refreshHistory(): Promise<void>;
   loadCommits(): Promise<void>;
   refreshSections(): Promise<void>;
-  setHunkDone(file: FileChange, hunk: Hunk, done: boolean): Promise<void>;
+  /** Mark sections of a file done, such as one section or every section of a hunk, or not done. */
+  setSectionsDone(file: FileChange, sections: readonly Section[], done: boolean): Promise<void>;
   archiveResolved(): Promise<void>;
-  setDoneUnfolded(key: string, unfolded: boolean): void;
+  setDoneUnfolded(keys: readonly string[], unfolded: boolean): void;
   applySuggestion(commentId: number): Promise<void>;
   loadDiff(file: FileChange, force?: boolean): Promise<void>;
   /** Drop a pending diff request for a file that left the page, so it stops holding a connection. */
@@ -250,19 +251,20 @@ export const useStore = create<Store>()((set, get) => {
     else get().toast(errorText(e));
   };
 
+  const addMark = (file: FileChange, r: { side: Side; start: number; end: number }) =>
+    api.addSectionMark({
+      path: sidePath(file, r.side), from_blob: file.old_blob, to_blob: file.new_blob, side: r.side, start_line: r.start, end_line: r.end,
+    });
+
   /** Mark every section of a file done, or clear them all, so "viewed" and its sections agree. */
   const syncSections = async (file: FileChange, done: boolean) => {
     const diff = get().diffs[diffKey(file)];
     const marks = validMarks(get().sections, file);
     if (done) {
       if (diff?.state !== 'ready') return;
-      for (const hunk of diff.value.hunks) {
-        if (hunkDone(hunk, marks)) continue;
-        for (const r of hunkRanges(hunk)) {
-          await api.addSectionMark({
-            path: sidePath(file, r.side), from_blob: file.old_blob, to_blob: file.new_blob, side: r.side, start_line: r.start, end_line: r.end,
-          });
-        }
+      for (const section of fileSections(diff.value.hunks)) {
+        if (sectionDone(section, marks)) continue;
+        for (const r of sectionRanges(section)) await addMark(file, r);
       }
     } else {
       for (const m of marks) await api.removeSectionMark(m.id);
@@ -430,16 +432,16 @@ export const useStore = create<Store>()((set, get) => {
       }
     },
 
-    async setHunkDone(file, hunk, done) {
+    async setSectionsDone(file, sections, done) {
       try {
+        const ranges = sections.flatMap(sectionRanges);
         if (done) {
-          for (const r of hunkRanges(hunk)) {
-            await api.addSectionMark({
-              path: sidePath(file, r.side), from_blob: file.old_blob, to_blob: file.new_blob, side: r.side, start_line: r.start, end_line: r.end,
-            });
-          }
+          for (const r of ranges) await addMark(file, r);
         } else {
-          for (const m of marksOverlapping(hunk, validMarks(get().sections, file))) await api.removeSectionMark(m.id);
+          // Mark again first what stays done, so the file never shows those sections undone.
+          const plan = unmarkPlan(ranges, validMarks(get().sections, file));
+          for (const r of plan.keep) await addMark(file, r);
+          for (const m of plan.remove) await api.removeSectionMark(m.id);
           const blob = viewedBlob(file);
           if (blob && get().viewed.has(markKey(file.path, blob))) await get().setViewed(file, false, { keepSections: true });
         }
@@ -448,7 +450,7 @@ export const useStore = create<Store>()((set, get) => {
         const diff = get().diffs[diffKey(file)];
         if (done && diff?.state === 'ready') {
           const marks = validMarks(get().sections, file);
-          if (diff.value.hunks.every((h) => hunkDone(h, marks))) await get().setViewed(file, true);
+          if (fileSections(diff.value.hunks).every((sec) => sectionDone(sec, marks))) await get().setViewed(file, true);
         }
       } catch (e) {
         fail(e);
@@ -465,8 +467,8 @@ export const useStore = create<Store>()((set, get) => {
       }
     },
 
-    setDoneUnfolded(key, unfolded) {
-      set((s) => ({ unfoldedDone: { ...s.unfoldedDone, [key]: unfolded } }));
+    setDoneUnfolded(keys, unfolded) {
+      set((s) => ({ unfoldedDone: { ...s.unfoldedDone, ...Object.fromEntries(keys.map((k) => [k, unfolded])) } }));
     },
 
     async loadCommits() {

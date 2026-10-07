@@ -3,7 +3,7 @@ import type { FileChange, ThreadView } from '../../../src/core/api-types.ts';
 import { api } from '../api.ts';
 import { diffKey, markKey, placement, shortSha, threadFile, viewedBlob } from '../format.ts';
 import { fileAnchor, takePin } from '../lib/pin.ts';
-import { hunkDone, validMarks } from '../lib/sections.ts';
+import { fileSections, sectionDone, validMarks } from '../lib/sections.ts';
 import { buildTree, fileOrder } from '../lib/tree.ts';
 import { useStore } from '../store.ts';
 import { DiffTable } from './DiffTable.tsx';
@@ -139,9 +139,10 @@ function FileView({ file, threads }: { file: FileChange; threads: ThreadView[] }
   const openCount = threads.filter((t) => t.status === 'open').length;
   const sections = useStore((s) => s.sections);
   const progress = useMemo(() => {
-    if (!ready || ready.hunks.length < 2) return null;
+    const parts = ready ? fileSections(ready.hunks) : [];
+    if (parts.length < 2) return null;
     const marks = validMarks(sections, file);
-    return { done: ready.hunks.filter((h) => hunkDone(h, marks)).length, total: ready.hunks.length };
+    return { done: parts.filter((p) => sectionDone(p, marks)).length, total: parts.length };
   }, [ready, sections, file]);
 
   let body: ReactNode = null;

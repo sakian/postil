@@ -151,7 +151,7 @@ describe('diff rows from synthetic hunks', () => {
 
 describe('selection', () => {
   const line = (key: string, kind: 'context' | 'add' | 'del', oldNo: number | null, newNo: number | null): Row =>
-    ({ type: 'line', key, kind, oldNo, newNo, text: '', noEol: false, expanded: false, hunk: 0 });
+    ({ type: 'line', key, kind, oldNo, newNo, text: '', noEol: false, expanded: false, hunk: 0, section: kind === 'context' ? null : 0 });
   const rows: Row[] = [
     line('a', 'context', 1, 1), line('b', 'del', 2, null), line('c', 'del', 3, null),
     line('d', 'add', null, 2), line('e', 'context', 4, 3),
@@ -200,32 +200,51 @@ describe('file tree', () => {
 });
 
 describe('section done', async () => {
-  const { hunkDone, hunkRanges, marksOverlapping } = await import('../../web/src/lib/sections.ts');
+  const { fileSections, hunkDone, sectionDone, sectionRanges, unmarkPlan } = await import('../../web/src/lib/sections.ts');
+  const { buildRows, foldDone } = await import('../../web/src/lib/rows.ts');
+  // Two runs of changes, split by one unchanged line: lines 11 -> 11-12, then 13 removed.
   const hunk = {
-    old_start: 10, old_lines: 3, new_start: 10, new_lines: 4, header: '',
+    old_start: 10, old_lines: 5, new_start: 10, new_lines: 5, header: '',
     lines: [
       { kind: 'context' as const, old_no: 10, new_no: 10, text: '' },
       { kind: 'del' as const, old_no: 11, new_no: null, text: '' },
       { kind: 'add' as const, old_no: null, new_no: 11, text: '' },
       { kind: 'add' as const, old_no: null, new_no: 12, text: '' },
       { kind: 'context' as const, old_no: 12, new_no: 13, text: '' },
+      { kind: 'del' as const, old_no: 13, new_no: null, text: '' },
+      { kind: 'context' as const, old_no: 14, new_no: 14, text: '' },
     ],
   };
   const mark = (side: 'old' | 'new', start: number, end: number, state: 'current' | 'moved' | 'outdated' = 'current') => ({
     id: Math.random(), path: 'f', from_blob: null, to_blob: null, side, start_line: start, end_line: end, content_hash: '', created_at: '',
     anchor: { state, path: 'f', start_line: start, end_line: end },
   });
+  const [first, second] = fileSections([hunk]);
 
-  it('needs both the added and the removed lines covered', () => {
-    assert.equal(hunkDone(hunk, [mark('new', 10, 13)]), false);
-    assert.equal(hunkDone(hunk, [mark('new', 10, 13), mark('old', 10, 12)]), true);
+  it('splits a hunk into runs of changed lines', () => {
+    assert.equal(fileSections([hunk]).length, 2);
+    assert.deepEqual(sectionRanges(first!), [{ side: 'new', start: 11, end: 12 }, { side: 'old', start: 11, end: 11 }]);
+    assert.deepEqual(sectionRanges(second!), [{ side: 'old', start: 13, end: 13 }]);
   });
-  it('proposes the hunk span on each side', () => {
-    assert.deepEqual(hunkRanges(hunk), [{ side: 'new', start: 10, end: 13 }, { side: 'old', start: 10, end: 12 }]);
+  it('needs both the added and the removed lines of a section covered', () => {
+    assert.equal(sectionDone(first!, [mark('new', 11, 12)]), false);
+    assert.equal(sectionDone(first!, [mark('new', 11, 12), mark('old', 11, 11)]), true);
+    assert.equal(sectionDone(second!, [mark('new', 11, 12), mark('old', 11, 11)]), false);
+    assert.equal(hunkDone(hunk, [mark('new', 11, 12), mark('old', 11, 13)]), true);
   });
-  it('finds the marks to remove when un-marking', () => {
-    const marks = [mark('new', 11, 11), mark('new', 30, 31), mark('old', 12, 12)];
-    assert.equal(marksOverlapping(hunk, marks).length, 2);
+  it('keeps the other sections done when un-marking one under a mark made for the whole hunk', () => {
+    const plan = unmarkPlan(sectionRanges(second!), [mark('new', 10, 14), mark('old', 10, 14)]);
+    assert.equal(plan.remove.length, 1, 'only the old-side mark covers the removed line');
+    assert.deepEqual(plan.keep, [{ side: 'old', start: 10, end: 12 }, { side: 'old', start: 14, end: 14 }]);
+  });
+  it('folds a done section alone, and a hunk whose sections are all folded whole', () => {
+    const rows = buildRows({ hunks: [hunk], new_lines: 14 }, { revealed: [], newLines: null });
+    const fold = (sections: number[], hunks: number[]) =>
+      foldDone(rows, { sections: new Set(sections), hunks: new Set(hunks) }, { hunk: () => 4, section: (i) => (i === 0 ? 3 : 1) })
+        .filter((r) => r.type !== 'expander' && r.type !== 'hunk')
+        .map((r) => (r.type === 'done' ? `done${r.section ?? ''}` : r.type === 'line' ? r.kind : r.type));
+    assert.deepEqual(fold([0], []), ['context', 'done0', 'context', 'del', 'context']);
+    assert.deepEqual(fold([0, 1], [0]), ['done']);
   });
 });
 

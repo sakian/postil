@@ -1,8 +1,8 @@
 import { Fragment, useCallback, useEffect, useMemo, useRef, type MouseEvent, type ReactNode } from 'react';
-import type { FileChange, FileDiff, Hunk, Side, ThreadView } from '../../../src/core/api-types.ts';
+import type { FileChange, FileDiff, Side, ThreadView } from '../../../src/core/api-types.ts';
 import { normalize, type Range } from '../lib/ranges.ts';
 import { buildRows, EXPAND_STEP, foldDone, gaps, oldToNewInGaps, toSplit, type Row, type SplitRow } from '../lib/rows.ts';
-import { hunkDone, validMarks } from '../lib/sections.ts';
+import { fileSections, sectionDone, validMarks, type Section } from '../lib/sections.ts';
 import { isSelected, splitSelection, unifiedSelection, type Selection } from '../lib/selection.ts';
 import { currentLines, diffKey, markKey, sidePath, viewedBlob } from '../format.ts';
 import { renderEmphasis, renderTokens, type Token } from '../highlight/index.tsx';
@@ -33,17 +33,23 @@ export function DiffTable({ file, diff, threads }: Props) {
   const unfoldedDone = useStore((s) => s.unfoldedDone);
   const viewedBlobId = viewedBlob(file);
   const viewed = useStore((s) => (viewedBlobId ? s.viewed.has(markKey(file.path, viewedBlobId)) : false));
-  const { expand, collapse, select, openComposer, loadLines, setHunkDone, setDoneUnfolded } = useStore.getState();
+  const { expand, collapse, select, openComposer, loadLines, setSectionsDone, setDoneUnfolded } = useStore.getState();
   const key = diffKey(file);
 
-  // Hunks marked done fold to one line unless the user unfolded them this session. A viewed file
-  // the user opens again is being looked at again, so its sections start unfolded.
+  // Each run of changed lines is a section the user can mark done. Sections marked done fold to
+  // one line unless the user unfolded them this session, and a hunk whose sections all fold folds
+  // whole. A viewed file the user opens again is being looked at again, so its sections start unfolded.
   const marks = useMemo(() => validMarks(sections, file), [sections, file]);
-  const done = useMemo(() => diff.hunks.map((h) => hunkDone(h, marks)), [diff, marks]);
-  const folded = useMemo(
-    () => new Set(done.flatMap((d, i) => (d && !(unfoldedDone[`${key}#${i}`] ?? viewed) ? [i] : []))),
-    [done, unfoldedDone, key, viewed],
-  );
+  const parts = useMemo(() => fileSections(diff.hunks), [diff]);
+  const byHunk = useMemo(() => diff.hunks.map((_, h) => parts.filter((p) => p.hunk === h)), [diff, parts]);
+  const done = useMemo(() => parts.map((p) => sectionDone(p, marks)), [parts, marks]);
+  const hunkIsDone = (h: number) => byHunk[h]!.length > 0 && byHunk[h]!.every((p) => done[p.index]);
+  const unfoldKey = (p: Section) => `${key}#s${p.index}`;
+  const folded = useMemo(() => {
+    const secs = new Set(parts.flatMap((p) => (done[p.index] && !(unfoldedDone[`${key}#s${p.index}`] ?? viewed) ? [p.index] : [])));
+    const hunks = new Set(byHunk.flatMap((ps, h) => (ps.length > 0 && ps.every((p) => secs.has(p.index)) ? [h] : [])));
+    return { sections: secs, hunks };
+  }, [parts, byHunk, done, unfoldedDone, key, viewed]);
 
   const newLines = linesState?.state === 'ready' ? linesState.value : null;
 
@@ -86,8 +92,11 @@ export function DiffTable({ file, diff, threads }: Props) {
 
   const rows = useMemo(
     () =>
-      foldDone(buildRows(diff, { revealed, forced, newLines }), folded, (h) => diff.hunks[h]!.lines.filter((l) => l.kind !== 'context').length),
-    [diff, revealed, forced, newLines, folded],
+      foldDone(buildRows(diff, { revealed, forced, newLines }), folded, {
+        hunk: (h) => diff.hunks[h]!.lines.filter((l) => l.kind !== 'context').length,
+        section: (i) => parts[i]!.changed,
+      }),
+    [diff, parts, revealed, forced, newLines, folded],
   );
   const split = useMemo(() => (view === 'split' ? toSplit(rows) : null), [rows, view]);
   // The words that changed within each removed line and the added line it pairs with.
@@ -163,41 +172,76 @@ export function DiffTable({ file, diff, threads }: Props) {
     );
   };
 
+  /** The toggle for some sections: every section of a hunk, in its header, or one section. */
+  const toggle = (ps: readonly Section[], isDone: boolean, what: string) => (
+    <button className={`done-toggle${isDone ? ' on' : ''}`} onClick={() => void setSectionsDone(file, ps, !isDone)}
+      title={isDone ? `Mark ${what} as not reviewed` : `Mark ${what} reviewed. It stays done until its lines change.`}>
+      {isDone ? <><Icon name="check" size={12} /> Done</> : 'Mark done'}
+    </button>
+  );
+
+  /** One section's checkbox, at the right of its first line or of its folded row. */
+  const sectionCheck = (p: Section, isDone: boolean) => (
+    <input type="checkbox" className="section-check" checked={isDone} onChange={() => void setSectionsDone(file, [p], !isDone)}
+      title={isDone ? 'Reviewed. Uncheck to mark this section as not reviewed' : 'Mark this section reviewed. It stays done until its lines change.'}
+      aria-label="Section reviewed" />
+  );
+
   const doneToggle = (h: number) => {
-    const hunk: Hunk = diff.hunks[h]!;
+    const ps = byHunk[h]!;
+    const isDone = hunkIsDone(h);
     return (
       <span className="done-controls">
-        {done[h] && !folded.has(h) && (
-          <button className="link-btn" onClick={() => setDoneUnfolded(`${key}#${h}`, false)}>Fold</button>
+        {isDone && !folded.hunks.has(h) && (
+          <button className="link-btn" onClick={() => setDoneUnfolded(ps.map(unfoldKey), false)}>Fold</button>
         )}
-        <button className={`done-toggle${done[h] ? ' on' : ''}`} onClick={() => void setHunkDone(file, hunk, !done[h])}
-          title={done[h] ? 'Mark this section as not reviewed' : 'Mark this section reviewed. It stays done until its lines change.'}>
-          {done[h] ? <><Icon name="check" size={12} /> Done</> : 'Mark done'}
-        </button>
+        {toggle(ps, isDone, ps.length > 1 ? 'every section of this hunk' : 'this section')}
       </span>
     );
   };
 
-  /** Threads anchored inside a hunk, shown under its folded summary so no conversation is hidden. */
-  const threadsInHunk = (h: number): ThreadView[] => {
-    const hunk = diff.hunks[h]!;
-    return threads.filter((t) => {
-      const end = currentLines(t).end;
-      if (end === null) return false;
-      return t.side === 'new'
+  /** A section's own controls, on its first line, where its hunk holds more than one. */
+  const sectionControls = (i: number | null, first: boolean): ReactNode => {
+    if (i === null || !first) return null;
+    const p = parts[i]!;
+    if (byHunk[p.hunk]!.length < 2) return null;
+    return (
+      <span className="done-controls section-controls">
+        {done[i] && <button className="link-btn" onClick={() => setDoneUnfolded([unfoldKey(p)], false)}>Fold</button>}
+        {sectionCheck(p, done[i]!)}
+      </span>
+    );
+  };
+
+  /** Threads ending inside a folded hunk or section, shown under its summary so no conversation is hidden. */
+  const threadsIn = (r: Extract<Row, { type: 'done' }>): ThreadView[] => {
+    const hunk = diff.hunks[r.hunk]!;
+    const p = r.section === null ? null : parts[r.section]!;
+    const within = (side: Side, end: number) => {
+      if (p) {
+        const range = p[side];
+        return range !== null && end >= range.start && end <= range.end;
+      }
+      return side === 'new'
         ? end >= hunk.new_start && end < hunk.new_start + Math.max(hunk.new_lines, 1)
         : end >= hunk.old_start && end < hunk.old_start + Math.max(hunk.old_lines, 1);
+    };
+    return threads.filter((t) => {
+      const end = currentLines(t).end;
+      return end !== null && within(t.side, end);
     });
   };
 
   const doneRow = (r: Extract<Row, { type: 'done' }>) => {
-    const inside = threadsInHunk(r.hunk);
+    const inside = threadsIn(r);
+    const p = r.section === null ? null : parts[r.section]!;
     return (
       <Fragment key={r.key}>
         <tr className="done-row">
           <td colSpan={width}>
+            {p && <span className="done-controls">{sectionCheck(p, true)}</span>}
             <Icon name="check" size={14} /> Reviewed · {r.changed} changed line{r.changed === 1 ? '' : 's'}
-            <button className="link-btn" onClick={() => setDoneUnfolded(`${key}#${r.hunk}`, true)}>Show</button>
+            <button className="link-btn" onClick={() => setDoneUnfolded((p ? [p] : byHunk[r.hunk]!).map(unfoldKey), true)}>Show</button>
           </td>
         </tr>
         {inside.length > 0 && (
@@ -276,8 +320,13 @@ export function DiffTable({ file, diff, threads }: Props) {
     </button>
   );
 
+  /** Whether each row starts a section, so its controls go there. */
+  const starts = (list: ReadonlyArray<{ type: string; section?: number | null }>) =>
+    list.map((r, i) => (r.type === 'line' || r.type === 'pair') && r.section != null && list[i - 1]?.section !== r.section);
+
   // -------------------------------------------------------------- unified
   if (!split) {
+    const first = starts(rows);
     return (
       <table className="diff diff-unified">
         <colgroup><col className="col-num" /><col className="col-num" /><col className="col-marker" /><col /></colgroup>
@@ -296,7 +345,7 @@ export function DiffTable({ file, diff, threads }: Props) {
                   <td className="num" data-no={r.oldNo ?? ''} onMouseDown={(e) => onGutterDown(e, i, null)} />
                   <td className="num" data-no={r.newNo ?? ''} onMouseDown={(e) => onGutterDown(e, i, null)} />
                   <td className="marker">{addButton(i, null)}{r.kind === 'add' ? '+' : r.kind === 'del' ? '-' : ' '}</td>
-                  <td className="code">{r.kind === 'del'
+                  <td className="code">{sectionControls(r.section, first[i]!)}{r.kind === 'del'
                     ? code(r.text, r.noEol, tokensFor('old', r.oldNo), wordsFor('old', r.oldNo))
                     : code(r.text, r.noEol, tokensFor('new', r.newNo), r.kind === 'add' ? wordsFor('new', r.newNo) : undefined)}</td>
                 </tr>
@@ -314,6 +363,7 @@ export function DiffTable({ file, diff, threads }: Props) {
   const cellClass = (kind: string | undefined, expanded: boolean | undefined) =>
     kind ? `${kind}${expanded ? ' revealed' : ''}` : 'empty';
 
+  const firstPair = starts(split);
   return (
     <table className="diff diff-split">
       <colgroup><col className="col-num" /><col className="col-half" /><col className="col-num" /><col className="col-half" /></colgroup>
@@ -333,12 +383,14 @@ export function DiffTable({ file, diff, threads }: Props) {
                   onMouseDown={left ? (e) => onGutterDown(e, i, 'old') : undefined} />
                 <td className={`code ${cellClass(left?.kind, left?.expanded)}${selL ? ' selected' : ''}`}>
                   {left && addButton(i, 'old')}
+                  {!right && sectionControls(r.section, firstPair[i]!)}
                   {left && code(left.text, left.noEol, tokensFor('old', left.no), left.kind === 'del' ? wordsFor('old', left.no) : undefined)}
                 </td>
                 <td className={`num ${cellClass(right?.kind, right?.expanded)}${selR ? ' selected' : ''}`} data-no={right?.no ?? ''}
                   onMouseDown={right ? (e) => onGutterDown(e, i, 'new') : undefined} />
                 <td className={`code ${cellClass(right?.kind, right?.expanded)}${selR ? ' selected' : ''}`}>
                   {right && addButton(i, 'new')}
+                  {right && sectionControls(r.section, firstPair[i]!)}
                   {right && code(right.text, right.noEol, tokensFor('new', right.no), right.kind === 'add' ? wordsFor('new', right.no) : undefined)}
                 </td>
               </tr>

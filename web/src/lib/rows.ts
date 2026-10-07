@@ -1,5 +1,6 @@
 import type { DiffLine, FileDiff, Hunk } from '../../../src/core/api-types.ts';
 import { intersect, normalize, partition, type Range } from './ranges.ts';
+import { fileSections } from './sections.ts';
 
 /**
  * Turns a file diff into display rows. Unified rows are the single source of truth; the
@@ -69,8 +70,8 @@ export type Row =
     }
   | { type: 'collapse'; key: string; start: number; end: number; count: number }
   | { type: 'hunk'; key: string; header: string; hunk: number }
-  /** A hunk the user marked done, folded to one line. */
-  | { type: 'done'; key: string; hunk: number; changed: number }
+  /** A section the user marked done, or a hunk whose sections all are, folded to one line. */
+  | { type: 'done'; key: string; hunk: number; section: number | null; changed: number }
   | {
       type: 'line';
       key: string;
@@ -83,6 +84,8 @@ export type Row =
       expanded: boolean;
       /** The hunk this line belongs to; null for revealed context. */
       hunk: number | null;
+      /** The section this changed line belongs to; null for context. */
+      section: number | null;
     };
 
 export interface RowOptions {
@@ -111,7 +114,7 @@ export function buildRows(diff: Pick<FileDiff, 'hunks' | 'new_lines'>, opts: Row
         for (let n = a; n <= b; n++) {
           rows.push({
             type: 'line', key: `x${n}`, kind: 'context', oldNo: n + gap.offset, newNo: n,
-            text: opts.newLines?.[n - 1] ?? '', noEol: false, expanded: true, hunk: null,
+            text: opts.newLines?.[n - 1] ?? '', noEol: false, expanded: true, hunk: null, section: null,
           });
         }
       } else {
@@ -127,6 +130,9 @@ export function buildRows(diff: Pick<FileDiff, 'hunks' | 'new_lines'>, opts: Row
       }
     }
   };
+
+  const sectionOf = new Map<string, number>();
+  for (const s of fileSections(diff.hunks)) for (let j = s.first; j <= s.last; j++) sectionOf.set(`${s.hunk}.${j}`, s.index);
 
   const gapBefore = new Map<Hunk, Gap>();
   let bottom: Gap | undefined;
@@ -145,7 +151,7 @@ export function buildRows(diff: Pick<FileDiff, 'hunks' | 'new_lines'>, opts: Row
     hunk.lines.forEach((l, j) => {
       rows.push({
         type: 'line', key: `l${i}.${j}`, kind: l.kind, oldNo: l.old_no, newNo: l.new_no,
-        text: l.text, noEol: l.no_eol === true, expanded: false, hunk: i,
+        text: l.text, noEol: l.no_eol === true, expanded: false, hunk: i, section: sectionOf.get(`${i}.${j}`) ?? null,
       });
     });
   });
@@ -165,7 +171,7 @@ export interface Cell {
 
 export type SplitRow =
   | Exclude<Row, { type: 'line' }>
-  | { type: 'pair'; key: string; left: Cell | null; right: Cell | null; hunk: number | null };
+  | { type: 'pair'; key: string; left: Cell | null; right: Cell | null; hunk: number | null; section: number | null };
 
 /** Pair deletions with the additions that follow them, side by side. */
 export function toSplit(rows: readonly Row[]): SplitRow[] {
@@ -183,7 +189,7 @@ export function toSplit(rows: readonly Row[]): SplitRow[] {
       const a = adds[i];
       out.push({
         type: 'pair', key: `p${d?.key ?? ''}|${a?.key ?? ''}`, left: d ? cell(d, 'old') : null, right: a ? cell(a, 'new') : null,
-        hunk: (d ?? a)!.hunk,
+        hunk: (d ?? a)!.hunk, section: (d ?? a)!.section,
       });
     }
     dels = [];
@@ -198,7 +204,7 @@ export function toSplit(rows: readonly Row[]): SplitRow[] {
       adds.push(r);
     } else {
       flush();
-      if (r.type === 'line') out.push({ type: 'pair', key: `p${r.key}`, left: cell(r, 'old'), right: cell(r, 'new'), hunk: r.hunk });
+      if (r.type === 'line') out.push({ type: 'pair', key: `p${r.key}`, left: cell(r, 'old'), right: cell(r, 'new'), hunk: r.hunk, section: r.section });
       else out.push(r);
     }
   }
@@ -216,26 +222,33 @@ export function oldToNewInGaps(allGaps: readonly Gap[], oldNo: number): number |
 }
 
 /**
- * Replace the lines of folded hunks with one "done" row each. Works on unified and split rows
- * alike, since both carry the hunk index on their line rows.
+ * Replace the lines of folded sections with one "done" row each, and a hunk whose sections are
+ * all folded, its unchanged lines too, with one row. Works on unified and split rows alike,
+ * since both carry the hunk and section on their line rows.
  */
-export function foldDone<T extends { type: string; hunk?: number | null }>(
+export function foldDone<T extends { type: string; hunk?: number | null; section?: number | null }>(
   rows: readonly T[],
-  folded: ReadonlySet<number>,
-  changedLines: (hunk: number) => number,
+  folded: { hunks: ReadonlySet<number>; sections: ReadonlySet<number> },
+  changedLines: { hunk: (hunk: number) => number; section: (section: number) => number },
 ): Array<T | Extract<Row, { type: 'done' }>> {
   const out: Array<T | Extract<Row, { type: 'done' }>> = [];
-  const emitted = new Set<number>();
+  const emitted = new Set<string>();
   for (const r of rows) {
     const isLine = r.type === 'line' || r.type === 'pair';
-    const h = isLine ? r.hunk : null;
-    if (h === null || h === undefined || !folded.has(h)) {
+    const h = isLine ? r.hunk ?? null : null;
+    const s = isLine ? r.section ?? null : null;
+    if (h !== null && folded.hunks.has(h)) {
+      if (!emitted.has(`h${h}`)) {
+        emitted.add(`h${h}`);
+        out.push({ type: 'done', key: `d${h}`, hunk: h, section: null, changed: changedLines.hunk(h) });
+      }
+    } else if (h !== null && s !== null && folded.sections.has(s)) {
+      if (!emitted.has(`s${s}`)) {
+        emitted.add(`s${s}`);
+        out.push({ type: 'done', key: `ds${s}`, hunk: h, section: s, changed: changedLines.section(s) });
+      }
+    } else {
       out.push(r);
-      continue;
-    }
-    if (!emitted.has(h)) {
-      emitted.add(h);
-      out.push({ type: 'done', key: `d${h}`, hunk: h, changed: changedLines(h) });
     }
   }
   return out;

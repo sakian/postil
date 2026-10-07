@@ -449,7 +449,11 @@ code, pre { font-family: var(--mono); }
 .done-toggle.on { background: var(--primary); border-color: var(--primary); color: #fff; }
 .done-row td { background: var(--bg-subtle); color: var(--fg-muted); font: 12px var(--sans); padding: 4px 12px !important; border-top: 1px solid var(--border-muted); border-bottom: 1px solid var(--border-muted); }
 .done-row .icon { color: var(--primary); vertical-align: -2px; }
+.done-row .done-toggle .icon { color: inherit; }
 .done-row .link-btn { margin-left: 8px; }
+/* A section's own controls sit at the end of its first line; the code wraps around them. */
+.section-controls { margin-left: 8px; user-select: none; }
+.section-check { width: 15px; height: 15px; margin: 2px 0; accent-color: var(--primary); cursor: pointer; }
 .chip-sections { background: var(--bg-inset); }
 .chip-sections.all { background: #dafbe1; color: #1a7f37; }
 @media (prefers-color-scheme: dark) { .chip-sections.all { background: rgba(46, 160, 67, 0.2); color: #3fb950; } }

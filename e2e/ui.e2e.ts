@@ -370,12 +370,14 @@ describe('postil UI', { timeout: 120_000 }, () => {
     const retry = file('src/retry.ts');
     await retry.scrollIntoViewIfNeeded();
     await retry.locator('.done-toggle').first().waitFor();
-    const sections = await retry.locator('.done-toggle').count();
-    assert.ok(sections >= 3, `retry.ts has ${sections} sections`);
-
-    await retry.locator('.done-toggle').first().click();
+    // A hunk with more than one run of changes has a checkbox for each run, besides the hunk's toggle.
+    const one = (await retry.locator('.section-controls').count()) > 0
+      ? retry.locator('.section-check').first()
+      : retry.locator('.done-toggle').first();
+    await one.click();
     await retry.locator('.done-row').first().waitFor();
-    assert.match(await retry.locator('.chip-sections').innerText(), new RegExp(`1/${sections} sections done`));
+    const sections = Number(/1\/(\d+) sections done/.exec(await retry.locator('.chip-sections').innerText())?.[1]);
+    assert.ok(sections >= 3, `retry.ts has ${sections} sections`);
     await shot('14-section-done');
 
     await retry.locator('.done-row').getByRole('button', { name: 'Show' }).click();
@@ -391,14 +393,15 @@ describe('postil UI', { timeout: 120_000 }, () => {
     await until(async () => /1\/\d+ sections done/.test(await retry.locator('.chip-sections').innerText().catch(() => '')), 'the mark to survive the edit');
     assert.equal(await retry.locator('.done-row').count(), 1);
 
-    // Finishing the last section finishes the file.
+    // Finishing the last section finishes the file. A hunk's toggle marks its sections one range
+    // at a time, so look again after each click rather than trusting a count taken before it.
     const viewedBefore = await page.locator('.tree-file.is-viewed').count();
-    for (let left = await retry.locator('.done-toggle:not(.on)').count(); left > 0; left--) {
-      await retry.locator('.done-toggle:not(.on)').first().click();
-      // Wait for this mark to land (or for the file to fold, after the last one) before the next.
-      await until(async () => (await retry.locator('.done-toggle:not(.on)').count()) < left, 'the section to be marked');
-    }
-    await until(async () => (await page.locator('.tree-file.is-viewed').count()) === viewedBefore + 1, 'retry.ts to be marked viewed');
+    await until(async () => {
+      if ((await page.locator('.tree-file.is-viewed').count()) === viewedBefore + 1) return true;
+      const next = retry.locator('.done-toggle:not(.on), .section-check:not(:checked)').first();
+      if (await next.count()) await next.click({ timeout: 1000 }).catch(() => {}); // a toggle not on only marks
+      return false;
+    }, 'retry.ts to be marked viewed', 15_000);
   });
 
   it('colours code by language', async () => {
