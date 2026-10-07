@@ -1,4 +1,5 @@
 import { strict as assert } from 'node:assert';
+import { execFileSync } from 'node:child_process';
 import { readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { after, before, describe, it } from 'node:test';
@@ -31,6 +32,27 @@ describe('Repo.worktreeTree', () => {
     assert.deepEqual(listing, ['a.txt', 'c.txt']);
     assert.deepEqual(readFileSync(join(fx.dir, '.git/index')), indexBefore);
     assert.match(fx.git('status', '--porcelain'), /^M  a\.txt$/m, 'staged change preserved');
+  });
+
+  it('takes executable bits from the real index when core.fileMode is false', async () => {
+    const fx2 = makeFixture();
+    try {
+      fx2.git('config', 'core.fileMode', 'false');
+      fx2.write('tool.py', 'print(1)\n');
+      fx2.git('add', 'tool.py');
+      fx2.git('update-index', '--chmod=+x', 'tool.py');
+      fx2.commit('base');
+      const repo2 = await Repo.open(fx2.dir);
+      await repo2.worktreeTree();
+      // A stale mode in the private index, which git keeps while core.fileMode is false.
+      const env = { ...process.env, GIT_INDEX_FILE: join(repo2.stateDir, 'worktree.index') };
+      execFileSync('git', ['update-index', '--chmod=-x', 'tool.py'], { cwd: fx2.dir, env });
+
+      const tree = await repo2.worktreeTree();
+      assert.match(fx2.git('ls-tree', tree, 'tool.py'), /^100755 /);
+    } finally {
+      fx2.cleanup();
+    }
   });
 
   it('keeps its state out of the working tree', async () => {
