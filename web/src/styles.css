@@ -441,15 +441,8 @@ code, pre { font-family: var(--mono); }
 
 /* ------------------------------------------------------------------ phase 5: sections */
 .done-controls { float: right; display: inline-flex; gap: 6px; align-items: center; font-family: var(--sans); }
-.done-toggle {
-  display: inline-flex; align-items: center; gap: 4px; font: 11px var(--sans); padding: 0 8px; line-height: 18px;
-  border: 1px solid var(--border); border-radius: 10px; background: var(--bg); color: var(--fg-muted); cursor: pointer;
-}
-.done-toggle:hover { border-color: var(--primary); color: var(--primary); }
-.done-toggle.on { background: var(--primary); border-color: var(--primary); color: #fff; }
 .done-row td { background: var(--bg-subtle); color: var(--fg-muted); font: 12px var(--sans); padding: 4px 12px !important; border-top: 1px solid var(--border-muted); border-bottom: 1px solid var(--border-muted); }
 .done-row .icon { color: var(--primary); vertical-align: -2px; }
-.done-row .done-toggle .icon { color: inherit; }
 .done-row .link-btn { margin-left: 8px; }
 /* A section's own controls sit at the end of its first line; the code wraps around them. */
 .section-controls { margin-left: 8px; user-select: none; }
@@ -499,7 +492,7 @@ kbd { font: 12px var(--mono); padding: 1px 6px; border: 1px solid var(--border);
 }
 
 /* ------------------------------------------------------------------ sticky section headers */
-/* A section's header (and its "Mark done") stays in view under the file header while you read it. */
+/* A hunk's header stays in view under the file header while you read it. */
 .sticky-hunk td {
   position: sticky; top: 25px; z-index: 1;
   background-image: linear-gradient(var(--hunk-bg), var(--hunk-bg)); background-color: var(--bg);

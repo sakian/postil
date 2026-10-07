@@ -61,17 +61,17 @@ function clickIn(file: HTMLElement | null, selector: string): void {
   file?.querySelector<HTMLElement>(selector)?.click();
 }
 
-/** The first section toggle on screen: the section the reader is looking at. */
+/** The first section checkbox on screen: the section the reader is looking at. */
 function toggleTopSection(): void {
   const top = readingTop();
-  const toggles = [...document.querySelectorAll<HTMLElement>('main.main .done-toggle')];
+  const toggles = [...document.querySelectorAll<HTMLElement>('main.main .section-check')];
   const target = toggles.find((t) => t.getBoundingClientRect().top >= top - 8 && t.getBoundingClientRect().top < window.innerHeight);
   target?.click();
 }
 
 export function isTyping(target: EventTarget | null): boolean {
   const el = target as HTMLElement | null;
-  return !!el && (el.tagName === 'TEXTAREA' || el.tagName === 'INPUT' || el.tagName === 'SELECT' || el.isContentEditable);
+  return !!el && (el.tagName === 'TEXTAREA' || (el.tagName === 'INPUT' && !['checkbox', 'radio'].includes((el as HTMLInputElement).type)) || el.tagName === 'SELECT' || el.isContentEditable);
 }
 
 /** Handle a key press; returns true when it was a postil shortcut. */

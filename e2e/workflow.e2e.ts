@@ -92,7 +92,7 @@ describe('the reviewing workflow', { timeout: 180_000 }, () => {
     await page.screenshot({ path: `${SHOTS}21-word-diff.png` });
   });
 
-  it('keeps each section header, with its "Mark done", stuck in view while reading it', async () => {
+  it('keeps each hunk header stuck in view while reading it', async () => {
     const position = await file(FILES[0]!).locator('.sticky-hunk td').first().evaluate((el) => getComputedStyle(el).position);
     assert.equal(position, 'sticky');
   });
@@ -137,7 +137,7 @@ describe('the reviewing workflow', { timeout: 180_000 }, () => {
 
   it('collapses the conversations in a section marked done', async () => {
     const f = file('pkg/f02.ts');
-    await f.locator('.done-toggle').first().click();
+    await f.locator('.section-check').first().click();
     await f.locator('.done-row').first().waitFor();
     await f.locator('.done-row + .attach-row .thread.is-collapsed').waitFor();
     await page.screenshot({ path: `${SHOTS}22-done-section.png` });
@@ -150,7 +150,7 @@ describe('the reviewing workflow', { timeout: 180_000 }, () => {
     await until(async () => (await f.locator('.chip-sections').count()) === 0, 'the section count to go');
     await f.locator('[data-action="viewed"]').uncheck();
     await f.locator('table.diff').waitFor();
-    await until(async () => (await f.locator('.done-toggle.on').count()) === 0, 'every section to be not done again');
+    await until(async () => (await f.locator('.section-check:checked').count()) === 0, 'every section to be not done again');
   });
 
   it('opens a viewed file again with its sections unfolded, each still foldable', async () => {
@@ -159,12 +159,12 @@ describe('the reviewing workflow', { timeout: 180_000 }, () => {
     await f.locator('[data-action="viewed"]').check();
     await until(async () => (await f.locator('table.diff').count()) === 0, 'the viewed file to fold');
     await f.locator('[data-action="fold"]').click();
-    await until(async () => (await f.locator('.done-toggle.on').count()) === 2, 'both sections to show as done');
+    await until(async () => (await f.locator('.section-check:checked').count()) === 2, 'both sections to show as done');
     assert.equal(await f.locator('.done-row').count(), 0);
     await f.locator('.done-controls').first().getByRole('button', { name: 'Fold' }).click();
     await until(async () => (await f.locator('.done-row').count()) === 1, 'the folded section to fold');
     await f.locator('[data-action="viewed"]').uncheck(); // later tests count the files left to view
-    await until(async () => (await f.locator('.done-toggle.on').count()) === 0, 'every section to be not done again');
+    await until(async () => (await f.locator('.section-check:checked').count()) === 0, 'every section to be not done again');
   });
 
   it('keeps the page on a file folded from the middle of it', async () => {

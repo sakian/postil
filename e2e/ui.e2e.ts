@@ -369,12 +369,7 @@ describe('postil UI', { timeout: 120_000 }, () => {
     if (await page.locator('table.diff-split').count()) await page.keyboard.press('s'); // back to unified
     const retry = file('src/retry.ts');
     await retry.scrollIntoViewIfNeeded();
-    await retry.locator('.done-toggle').first().waitFor();
-    // A hunk with more than one run of changes has a checkbox for each run, besides the hunk's toggle.
-    const one = (await retry.locator('.section-controls').count()) > 0
-      ? retry.locator('.section-check').first()
-      : retry.locator('.done-toggle').first();
-    await one.click();
+    await retry.locator('.section-check').first().click();
     await retry.locator('.done-row').first().waitFor();
     const sections = Number(/1\/(\d+) sections done/.exec(await retry.locator('.chip-sections').innerText())?.[1]);
     assert.ok(sections >= 3, `retry.ts has ${sections} sections`);
@@ -393,13 +388,13 @@ describe('postil UI', { timeout: 120_000 }, () => {
     await until(async () => /1\/\d+ sections done/.test(await retry.locator('.chip-sections').innerText().catch(() => '')), 'the mark to survive the edit');
     assert.equal(await retry.locator('.done-row').count(), 1);
 
-    // Finishing the last section finishes the file. A hunk's toggle marks its sections one range
-    // at a time, so look again after each click rather than trusting a count taken before it.
+    // Finishing the last section finishes the file. A section's marks land one range at a time,
+    // so look again after each click rather than trusting a count taken before it.
     const viewedBefore = await page.locator('.tree-file.is-viewed').count();
     await until(async () => {
       if ((await page.locator('.tree-file.is-viewed').count()) === viewedBefore + 1) return true;
-      const next = retry.locator('.done-toggle:not(.on), .section-check:not(:checked)').first();
-      if (await next.count()) await next.click({ timeout: 1000 }).catch(() => {}); // a toggle not on only marks
+      const next = retry.locator('.section-check:not(:checked)').first();
+      if (await next.count()) await next.click({ timeout: 1000 }).catch(() => {}); // an unchecked box only marks
       return false;
     }, 'retry.ts to be marked viewed', 15_000);
   });

@@ -317,7 +317,8 @@ export class Repo {
    * The private index persists between calls, which keeps git's stat cache warm: only files
    * whose metadata changed are re-hashed. It is seeded from a copy of the real index for the
    * same reason. Correctness never depends on its prior contents: `git add -A` makes it match
-   * the working tree, and dropping ignored entries the real index does not track finishes the job.
+   * the working tree, dropping ignored entries the real index does not track finishes the job, and
+   * where core.fileMode is false, the executable bits are taken from the real index.
    */
   async worktreeTree(): Promise<string> {
     return this.indexMutex.run(async () => {
@@ -350,7 +351,49 @@ export class Repo {
     }
     await git(this.root, ['add', '-A'], { env });
     await this.dropIgnored(env);
+    await this.adoptStagedModes(env);
     return (await gitText(this.root, ['write-tree'], { env })).trim();
+  }
+
+  /**
+   * With core.fileMode false, as on Windows, `git add -A` keeps the mode an entry already has, so
+   * a mode the private index once got wrong, such as 644 for a file added afresh, would stay
+   * forever. Take each file's executable bit from the user's own index, as git itself does there.
+   */
+  private async adoptStagedModes(env: Record<string, string>): Promise<void> {
+    let fileMode = 'true';
+    try {
+      fileMode = (await gitText(this.root, ['config', '--bool', 'core.fileMode'])).trim();
+    } catch (e) {
+      // Unset, which git reads as true.
+      if (!(e instanceof GitError)) throw e;
+    }
+    if (fileMode !== 'false') return;
+
+    const modes = async (opts: { env?: Record<string, string> }): Promise<Map<string, string>> => {
+      const out = await gitText(this.root, ['ls-files', '-s', '-z'], opts);
+      const byPath = new Map<string, string>();
+      for (const record of out.split('\0')) {
+        const tab = record.indexOf('\t');
+        if (tab > 0) byPath.set(record.slice(tab + 1), record.slice(0, record.indexOf(' ')));
+      }
+      return byPath;
+    };
+    const staged = await modes({});
+    const snapshot = await modes({ env });
+    const chmod: Record<'+x' | '-x', string[]> = { '+x': [], '-x': [] };
+    for (const [path, mode] of snapshot) {
+      const want = staged.get(path);
+      if (mode === '100644' && want === '100755') chmod['+x'].push(path);
+      if (mode === '100755' && want === '100644') chmod['-x'].push(path);
+    }
+    for (const [flag, paths] of Object.entries(chmod)) {
+      if (paths.length === 0) continue;
+      await git(this.root, ['update-index', `--chmod=${flag}`, '-z', '--stdin'], {
+        env,
+        input: paths.map((p) => `${p}\0`).join(''),
+      });
+    }
   }
 
   /**

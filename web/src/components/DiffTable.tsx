@@ -43,7 +43,6 @@ export function DiffTable({ file, diff, threads }: Props) {
   const parts = useMemo(() => fileSections(diff.hunks), [diff]);
   const byHunk = useMemo(() => diff.hunks.map((_, h) => parts.filter((p) => p.hunk === h)), [diff, parts]);
   const done = useMemo(() => parts.map((p) => sectionDone(p, marks)), [parts, marks]);
-  const hunkIsDone = (h: number) => byHunk[h]!.length > 0 && byHunk[h]!.every((p) => done[p.index]);
   const unfoldKey = (p: Section) => `${key}#s${p.index}`;
   const folded = useMemo(() => {
     const secs = new Set(parts.flatMap((p) => (done[p.index] && !(unfoldedDone[`${key}#s${p.index}`] ?? viewed) ? [p.index] : [])));
@@ -172,43 +171,24 @@ export function DiffTable({ file, diff, threads }: Props) {
     );
   };
 
-  /** The toggle for some sections: every section of a hunk, in its header, or one section. */
-  const toggle = (ps: readonly Section[], isDone: boolean, what: string) => (
-    <button className={`done-toggle${isDone ? ' on' : ''}`} onClick={() => void setSectionsDone(file, ps, !isDone)}
-      title={isDone ? `Mark ${what} as not reviewed` : `Mark ${what} reviewed. It stays done until its lines change.`}>
-      {isDone ? <><Icon name="check" size={12} /> Done</> : 'Mark done'}
-    </button>
+  /**
+   * The checkbox for some sections: one section, at the right of its first line or its folded
+   * row, or every section of a hunk folded whole, on that row.
+   */
+  const sectionCheck = (ps: readonly Section[], isDone: boolean) => (
+    <input type="checkbox" className="section-check" checked={isDone} onChange={() => void setSectionsDone(file, ps, !isDone)}
+      title={isDone ? 'Reviewed. Uncheck to mark it as not reviewed' : 'Mark this section reviewed. It stays done until its lines change.'}
+      aria-label="Section done" />
   );
 
-  /** One section's checkbox, at the right of its first line or of its folded row. */
-  const sectionCheck = (p: Section, isDone: boolean) => (
-    <input type="checkbox" className="section-check" checked={isDone} onChange={() => void setSectionsDone(file, [p], !isDone)}
-      title={isDone ? 'Reviewed. Uncheck to mark this section as not reviewed' : 'Mark this section reviewed. It stays done until its lines change.'}
-      aria-label="Section reviewed" />
-  );
-
-  const doneToggle = (h: number) => {
-    const ps = byHunk[h]!;
-    const isDone = hunkIsDone(h);
-    return (
-      <span className="done-controls">
-        {isDone && !folded.hunks.has(h) && (
-          <button className="link-btn" onClick={() => setDoneUnfolded(ps.map(unfoldKey), false)}>Fold</button>
-        )}
-        {toggle(ps, isDone, ps.length > 1 ? 'every section of this hunk' : 'this section')}
-      </span>
-    );
-  };
-
-  /** A section's own controls, on its first line, where its hunk holds more than one. */
+  /** A section's own controls, on its first line. */
   const sectionControls = (i: number | null, first: boolean): ReactNode => {
     if (i === null || !first) return null;
     const p = parts[i]!;
-    if (byHunk[p.hunk]!.length < 2) return null;
     return (
       <span className="done-controls section-controls">
         {done[i] && <button className="link-btn" onClick={() => setDoneUnfolded([unfoldKey(p)], false)}>Fold</button>}
-        {sectionCheck(p, done[i]!)}
+        {sectionCheck([p], done[i]!)}
       </span>
     );
   };
@@ -239,7 +219,7 @@ export function DiffTable({ file, diff, threads }: Props) {
       <Fragment key={r.key}>
         <tr className="done-row">
           <td colSpan={width}>
-            {p && <span className="done-controls">{sectionCheck(p, true)}</span>}
+            <span className="done-controls">{sectionCheck(p ? [p] : byHunk[r.hunk]!, true)}</span>
             <Icon name="check" size={14} /> Reviewed · {r.changed} changed line{r.changed === 1 ? '' : 's'}
             <button className="link-btn" onClick={() => setDoneUnfolded((p ? [p] : byHunk[r.hunk]!).map(unfoldKey), true)}>Show</button>
           </td>
@@ -283,7 +263,6 @@ export function DiffTable({ file, diff, threads }: Props) {
               Show all {count}
             </button>
           )}
-          {r.hunk !== null && doneToggle(r.hunk)}
         </td>
       </tr>
     );
@@ -302,7 +281,7 @@ export function DiffTable({ file, diff, threads }: Props) {
   const hunkRow = (r: Extract<Row, { type: 'hunk' }>) => (
     <tr key={r.key} className="hunk-row sticky-hunk">
       <td colSpan={view === 'split' ? 1 : 2} />
-      <td colSpan={view === 'split' ? 3 : 2}>{r.header}{doneToggle(r.hunk)}</td>
+      <td colSpan={view === 'split' ? 3 : 2}>{r.header}</td>
     </tr>
   );
 

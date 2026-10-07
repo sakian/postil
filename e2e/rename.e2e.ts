@@ -64,9 +64,9 @@ describe('a renamed and edited file', { timeout: 90_000 }, () => {
   });
 
   it('marks the section with the removed line done, and it stays done', async () => {
-    const toggle = file().locator('.done-toggle').first();
+    const toggle = file().locator('.section-check').first();
     await toggle.click();
-    await file().locator('.done-toggle.on').first().waitFor();
+    await file().locator('.section-check:checked').first().waitFor();
     await page.reload();
     await file().locator('.done-row').first().waitFor();
     assert.match(await file().locator('.chip-sections').innerText(), /1\/2 sections done/);
