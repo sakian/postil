@@ -91,7 +91,8 @@ conversations are under Archived in the UI. If you were listening, keep listenin
 
 `import <file>`: this conversation was moved here some other way and the user wants the review too.
 
-1. Call `import_session` with the file, or without one to take the newest export from the synced transfer folder. Never pass `force` unless the user agrees to replace a session under way here.
+1. Call `import_session` with the file. Without one, call it with `list` first; if there are several exports, show
+   the user the list and import the file they pick, otherwise import without a file. Never pass `force` unless the user agrees to replace a session under way here.
 2. If it refuses because a server is running, tell the user to run `postil stop`, or ask whether you should.
 3. Then start listening as in "Start listening".
 

@@ -1,5 +1,6 @@
 import { dirname } from 'node:path';
-import { transferDir, type ExportResult, type ImportResult } from '../core/transfer.ts';
+import type { ExportResult, ImportResult } from '../core/transfer.ts';
+import { transferDir, type ExportEntry, type ExportSummary } from '../core/transfer-dir.ts';
 
 function size(bytes: number): string {
   return bytes < 1024 * 1024 ? `${Math.max(1, Math.round(bytes / 1024))} KB` : `${(bytes / 1024 / 1024).toFixed(1)} MB`;
@@ -22,6 +23,8 @@ export function describeExport(r: ExportResult): string {
     `  branch:   ${m.branch ?? `detached at ${short(m.head)}`}`,
     `  snapshots: ${m.trees.length}, plus the working tree as it is now`,
     `  Claude:   ${m.claude_session ? `conversation ${m.claude_session} included` : 'no conversation included'}`,
+    ...(r.summary ? [`  state:    ${describeSummary(r.summary)}`] : []),
+    ...(r.replaced ? [`  replaced ${r.replaced} older export(s) of this branch in the transfer folder`] : []),
     '',
     synced
       ? 'Once it has synced, run `postil import` in the clone on the other computer.'
@@ -52,4 +55,40 @@ export function describeImport(r: ImportResult): string {
         : [`The Claude Code conversation is saved at ${r.transcript.path}. Claude Code's folder for this path could not be worked out, so copy it there yourself, then resume it.`]
       : ['Run /postil:review in Claude Code here to pick the review up.']),
   ].join('\n');
+}
+
+const plural = (n: number, one: string) => `${n} ${one}${n === 1 ? '' : 's'}`;
+
+export function describeSummary(s: ExportSummary): string {
+  const parts = [plural(s.open_threads, 'open conversation')];
+  if (s.waiting_reviews) parts.push(`${plural(s.waiting_reviews, 'review')} waiting for Claude`);
+  else if (s.last_review) parts.push(`review #${s.last_review.id} ${s.last_review.status.replace('_', ' ')}`);
+  if (s.drafts) parts.push(plural(s.drafts, 'unsent comment'));
+  return parts.join(', ');
+}
+
+function ago(iso: string, now = Date.now()): string {
+  const minutes = Math.round((now - Date.parse(iso)) / 60_000);
+  if (!Number.isFinite(minutes)) return 'at an unknown time';
+  if (minutes < 1) return 'just now';
+  if (minutes < 60) return `${plural(minutes, 'minute')} ago`;
+  const hours = Math.round(minutes / 60);
+  if (hours < 48) return `${plural(hours, 'hour')} ago`;
+  return `${plural(Math.round(hours / 24), 'day')} ago`;
+}
+
+/** One line per export, numbered from 1, for picking one. */
+export function describeExports(entries: ExportEntry[], now = Date.now()): string {
+  return entries.map((e, i) => {
+    const n = `${String(i + 1).padStart(3)}. `;
+    if (!e.info) return `${n}${e.file.split(/[\\/]/).pop()}`;
+    const { info } = e;
+    const what = [
+      info.branch ?? `detached at ${short(info.head)}`,
+      `from ${info.host}, ${ago(info.exported_at, now)}`,
+      ...(info.summary ? [describeSummary(info.summary)] : []),
+      ...(info.claude_session ? ['with the Claude conversation'] : []),
+    ];
+    return `${n}${what.join(' · ')}`;
+  }).join('\n');
 }

@@ -6,7 +6,7 @@ import { ApiError, NotRunningError, PostilClient } from '../core/client.ts';
 import { VERSION } from '../core/version.ts';
 import { formatPending, formatReview, formatUiThread } from './agent-format.ts';
 import { openBrowser, startDaemon, waitCommand } from './daemon.ts';
-import { describeExport, describeImport, resumeCommand } from './transfer-format.ts';
+import { describeExport, describeExports, describeImport, resumeCommand } from './transfer-format.ts';
 
 type ToolResult = { content: Array<{ type: 'text'; text: string }>; isError?: boolean };
 
@@ -254,15 +254,21 @@ export function createMcpServer(env: { projectDir: string; session: string | und
         'commits are missing. The review server must not be running here. Then call connect to listen. Only when the user asks for it.',
       inputSchema: {
         file: z.string().min(1).optional().describe('Default: the newest export of this repository in $POSTIL_TRANSFER_DIR.'),
+        list: z.boolean().optional().describe('Only list the exports of this repository in $POSTIL_TRANSFER_DIR, with their files, to let the user pick one.'),
         worktree: z.boolean().optional().describe(
           'Bring the exported working tree here when this one has no changes of its own (default true).',
         ),
         force: z.boolean().optional().describe('Replace a session already under way here, keeping its database as a backup. Only when the user agrees.'),
       },
     },
-    async ({ file, worktree, force }) => {
+    async ({ file, list, worktree, force }) => {
       try {
-        const { importSession } = await import('../core/transfer.ts');
+        const { importSession, sessionExports } = await import('../core/transfer.ts');
+        if (list) {
+          const entries = await sessionExports(env.projectDir);
+          if (!entries.length) return text('There are no exports of this repository in the transfer folder (or POSTIL_TRANSFER_DIR is not set).');
+          return text([describeExports(entries), '', 'Files, in the same order:', ...entries.map((e, i) => `${i + 1}. ${e.file}`)].join('\n'));
+        }
         return text(describeImport(await importSession(env.projectDir, file, { worktree: worktree ?? true, force: force ?? false })));
       } catch (e) {
         return failure(`postil: ${e instanceof Error ? e.message : String(e)}`);

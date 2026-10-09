@@ -12,6 +12,7 @@ import { extractSuggestion, hasSuggestion, replaceLines } from './suggestion.ts'
 import { EventBus } from './events.ts';
 import { defaultHistoryFile, History, normalizeRemote } from './history.ts';
 import { agentHint } from './hints.ts';
+import { pruneExports } from './transfer-dir.ts';
 
 export { agentHint } from './hints.ts';
 import { HttpError } from './util.ts';
@@ -1059,6 +1060,9 @@ export class Postil {
       await this.history.append({ repo, branch, tree, head, finished_at: new Date().toISOString() })
         .catch((e: unknown) => console.error(`postil: could not write ${this.history.file}: ${(e as Error).message}`));
     }
+    // An export of a finished session would only bring it back. Like the history, a convenience.
+    await pruneExports(repo, await this.repo.currentBranch())
+      .catch((e: unknown) => console.error(`postil: could not clear old exports: ${(e as Error).message}`));
     const archived = await this.archiveResolved();
     // Each session stands alone: the next one starts on all changes with nothing viewed.
     this.store.clearMarks();

@@ -97,9 +97,13 @@ Claude Code's folder for this repository's path, so `claude --resume <id>` finds
 session named, the export takes the one that listened most recently. Missing commits are fetched
 from the remotes, and the working tree is only brought along when that can lose nothing.
 
-With `POSTIL_TRANSFER_DIR` set, exports go to that folder, named with a hash of the repository's
-identity and the time, so `postil import` with no file takes the newest export of its own
-repository among others' and removes it once imported.
+With `POSTIL_TRANSFER_DIR` set (`src/core/transfer-dir.ts`), exports go to that folder, named with
+a hash of the repository's identity and the time, each with a JSON file beside it giving the
+branch, host, time and a summary of the session, so the folder can be listed without opening a
+bundle. `postil import` with no file lists its own repository's exports among others' and asks
+which to take, or takes the newest when nobody is at a terminal. An export is removed once
+imported, when a newer export of its branch is written, and when the session on its branch is
+finished.
 
 `postil move` (`src/cli/move.ts`) is export, `scp` to the other computer's home directory, and
 `ssh host sh -s` with a short script that runs `postil import` in the clone there.
