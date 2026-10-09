@@ -108,7 +108,7 @@ export const api = {
   setPreferences: (change: Partial<Preferences>) => call<Preferences>('PUT', '/api/preferences', change),
   reset: () => call<{ threads: number; reviews: number; drafts: number; unpinned: number }>('POST', '/api/reset'),
   archivedThreads: () => call<{ threads: ThreadView[] }>('GET', '/api/archive/threads'),
-  draft: () => call<{ draft: ReviewView | null }>('GET', '/api/reviews/draft'),
+  draft: () => call<{ draft: ReviewView | null; number: number }>('GET', '/api/reviews/draft'),
   setDraftBody: (body: string) => call<ReviewView>('PUT', '/api/reviews/draft', { body }),
   submit: (body?: string) => call<ReviewView>('POST', '/api/reviews/submit', body === undefined ? {} : { body }),
 

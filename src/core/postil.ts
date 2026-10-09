@@ -573,6 +573,11 @@ export class Postil {
     return review ? this.reviewView(review) : null;
   }
 
+  /** The number of the review the user is writing, whether or not they have started it. */
+  draftNumber(): number {
+    return this.store.draftReviewId();
+  }
+
   // ------------------------------------------------------------------ user: threads and drafts
 
   async createThread(input: NewThreadInput): Promise<ThreadView> {

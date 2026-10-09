@@ -77,6 +77,8 @@ interface State {
   commits: Loadable<CommitsInfo> | null;
   reviews: ReviewView[];
   draft: ReviewView | null;
+  /** The number the review being written has, or will get when submitted. */
+  draftNumber: number | null;
   viewed: Set<string>;
 
   view: ViewMode;
@@ -297,6 +299,7 @@ export const useStore = create<Store>()((set, get) => {
     commits: null,
     reviews: [],
     draft: null,
+    draftNumber: null,
     viewed: new Set(),
     view: 'unified',
     expanded: {},
@@ -402,8 +405,8 @@ export const useStore = create<Store>()((set, get) => {
 
     async refreshReviews() {
       try {
-        const [{ reviews }, { draft }] = await Promise.all([api.reviews(), api.draft()]);
-        set({ reviews, draft });
+        const [{ reviews }, { draft, number }] = await Promise.all([api.reviews(), api.draft()]);
+        set({ reviews, draft, draftNumber: number });
       } catch (e) {
         fail(e);
       }

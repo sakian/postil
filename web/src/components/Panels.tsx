@@ -97,6 +97,7 @@ function ThreadsPanel() {
 
 function ReviewPanel() {
   const draft = useStore((s) => s.draft);
+  const number = useStore((s) => s.draftNumber);
   const reviews = useStore((s) => s.reviews);
   const threads = useStore((s) => s.threads);
   const commitEach = useStore((s) => s.preferences.commit_each_review);
@@ -151,7 +152,7 @@ function ReviewPanel() {
         </section>
       ) : (
         <section>
-          <h3>Your review</h3>
+          <h3>Your review{number !== null && ` #${number}`}</h3>
           <p className="muted">
             {pendingCount === 0
               ? <>No pending comments. Comment on the code, or {overallLink('add an overall comment')}.</>

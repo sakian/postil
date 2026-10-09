@@ -235,7 +235,7 @@ export function createApp(postil: Postil, opts: AppOptions): Hono {
   app.put('/api/preferences', async (c) => c.json(postil.setPreferences(await json(c, schemas.preferences))));
   app.get('/api/archive/threads', (c) => c.json({ threads: postil.archivedThreads() }));
   app.post('/api/prune', async (c) => c.json(await postil.prune()));
-  app.get('/api/reviews/draft', (c) => c.json({ draft: postil.draft() }));
+  app.get('/api/reviews/draft', (c) => c.json({ draft: postil.draft(), number: postil.draftNumber() }));
   app.put('/api/reviews/draft', async (c) => c.json(postil.setDraftBody((await json(c, schemas.body)).body)));
   app.post('/api/reviews/submit', async (c) => c.json(await postil.submitReview((await json(c, schemas.optionalBody)).body), 201));
   app.get('/api/reviews/:id', (c) => c.json(postil.review(param(c, 'id'))));

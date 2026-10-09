@@ -98,6 +98,7 @@ function ClaudeStatus() {
   const reviews = useStore((s) => s.reviews);
   const listening = useStore((s) => s.listening);
   const completed = useStore((s) => s.completedReview);
+  const number = useStore((s) => s.draftNumber);
   const { setPanel } = useStore.getState();
   const working = reviews.find((r) => r.status === 'in_progress');
   const waiting = reviews.filter((r) => r.status === 'submitted');
@@ -120,11 +121,11 @@ function ClaudeStatus() {
   }
   return listening ? (
     <span className="claude-status listening" title="A Claude Code session will pick up your review as soon as you submit it">
-      <span className="dot" /> Claude is listening
+      <span className="dot" /> Claude is listening{number !== null && ` for review #${number}`}
     </span>
   ) : (
     <span className="claude-status idle" title="Run /postil:review in Claude Code so submitted reviews are picked up automatically">
-      Claude is not listening
+      Claude is not listening{number !== null && ` (review #${number})`}
     </span>
   );
 }
