@@ -67,7 +67,9 @@ describe('moving a session to another clone', () => {
     assert.equal(exported.manifest.trees.length > 0, true);
     assert.equal(a.git('for-each-ref', 'refs/postil-export/'), '', 'the temporary ref is gone');
 
-    const r = await importSession(b.dir, file);
+    const steps: string[] = [];
+    const r = await importSession(b.dir, file, { progress: (step) => steps.push(step) });
+    assert.deepEqual(steps, ['Checking session.bundle', 'Reading the export', 'Bringing over the review', `Fast-forwarding to ${a.git('rev-parse', '--short=7', 'HEAD').trim()} and restoring the working tree`]);
     assert.equal(r.worktree, 'restored');
     assert.equal(r.backup, null);
     assert.equal(text(join(b.dir, 'f.txt')), numbered(10, { 3: 'changed' }));
