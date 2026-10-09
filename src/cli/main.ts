@@ -30,6 +30,16 @@ Commands:
   reset                    Discard the review in progress to start a new one: archive every
                            conversation and review, delete unsent comments, clear viewed marks,
                            and tell a listening Claude session to drop it
+  export [<file>] [--claude <session-id>]
+                           Write this clone's review session to a file (default: one in your home
+                           directory), to carry on in another clone with \`postil import\`. It holds
+                           the conversations, viewed marks, the snapshots they need, and the working
+                           tree as it is. --claude adds that Claude Code conversation
+  import <file> [--worktree] [--force]
+                           Take over a session from \`postil export\`. Fetch first, so this clone has
+                           the commits the other one had. --worktree also brings the exported
+                           commit and uncommitted changes into this working tree, which must have no
+                           changes of its own. --force replaces a session already under way here
   doctor                   Check Node, git, the UI build, the Claude Code plugin, and the server
   link [--dir <d>] [--force]
                            Put \`postil\` on your PATH (default ~/.local/bin) for use in your terminal
@@ -51,6 +61,8 @@ const COMMAND_OPTIONS: Record<string, string[]> = {
   url: ['agent'],
   base: ['branch', 'empty', 'reset'],
   link: ['dir', 'force'],
+  export: ['claude'],
+  import: ['worktree', 'force'],
   wait: ['timeout'],
 };
 
@@ -69,6 +81,8 @@ async function main(argv: string[]): Promise<number> {
       dir: { type: 'string' },
       timeout: { type: 'string' },
       force: { type: 'boolean' },
+      claude: { type: 'string' },
+      worktree: { type: 'boolean' },
       version: { type: 'boolean', short: 'v' },
       help: { type: 'boolean', short: 'h' },
     },
@@ -160,6 +174,22 @@ async function main(argv: string[]): Promise<number> {
           : rest[0] !== undefined ? { rev: rest[0] }
           : null,
       );
+    case 'export': {
+      if (rest.length > 1) throw new UsageError('give at most one file to export to');
+      const { exportSession } = await import('../core/transfer.ts');
+      const r = await exportSession(cwd, { ...(rest[0] !== undefined && { file: rest[0] }), ...(values.claude !== undefined && { claudeSession: values.claude }) });
+      const { describeExport } = await import('./transfer-format.ts');
+      console.log(describeExport(r));
+      return 0;
+    }
+    case 'import': {
+      if (rest.length !== 1) throw new UsageError('give the file `postil export` wrote');
+      const { importSession } = await import('../core/transfer.ts');
+      const r = await importSession(cwd, rest[0]!, { force: values.force ?? false, worktree: values.worktree ?? false });
+      const { describeImport } = await import('./transfer-format.ts');
+      console.log(describeImport(r));
+      return 0;
+    }
     case 'doctor':
       return (await import('./doctor.ts')).doctor(cwd);
     case 'archive': {

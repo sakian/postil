@@ -66,7 +66,8 @@ describe('MCP server and hooks against a live review server', () => {
   it('offers the review tools', async () => {
     const { tools } = await mcp.listTools();
     assert.deepEqual(tools.map((t) => t.name).sort(), [
-      'apply_suggestion', 'complete_review', 'connect', 'get_review', 'get_thread', 'list_pending', 'open_ui', 'reply', 'reset',
+      'apply_suggestion', 'complete_review', 'connect', 'export_session', 'get_review', 'get_thread', 'import_session', 'list_pending',
+      'open_ui', 'reply', 'reset',
     ]);
   });
 

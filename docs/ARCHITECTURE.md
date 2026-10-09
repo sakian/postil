@@ -77,6 +77,24 @@ changes with nothing viewed.
 Linked worktrees share the repository's refs, so each worktree has its own ref namespace. Pruning
 one worktree's archive cannot release snapshots another still needs.
 
+### Moving a session
+
+`postil export` (`src/core/transfer.ts`) writes a git bundle with one commit, never on any branch.
+Its tree holds `manifest.json`, a `VACUUM INTO` copy of the database (consistent even while the
+server writes), every pinned tree and blob as entries under `pins/`, the working tree's snapshot as
+`worktree`, and optionally the Claude Code transcript under `claude/`. Its parents are HEAD and the
+pinned base, so unpushed commits travel. The bundle excludes what the remote-tracking branches
+reach, so the importing clone must have fetched as much; `git bundle verify` says so when it has
+not. The export snapshots through its own private index, so it never races a running server.
+
+`postil import` checks everything that can refuse first: no server running, the same repository
+identity as the history file uses, no session of its own under way here, and for `--worktree` a
+clean working tree whose HEAD the exported HEAD builds on. Then it moves the old database aside,
+writes the new one, and pins the objects in this worktree's own namespace, so a session moves
+between a main checkout and a linked worktree. `--worktree` fast-forwards if needed and writes the
+changed paths from a temporary index, leaving the real index alone. The transcript goes into
+Claude Code's folder for this repository's path, so `claude --resume <id>` finds it.
+
 ## Snapshots without commits
 
 A snapshot is `git add -A` into a private index followed by `git write-tree`. The user's real index,
@@ -186,6 +204,9 @@ so the plugin needs no fixed port.
 | `reply` | Post Claude's reply to a thread, optionally flagging it as needing the user's decision |
 | `apply_suggestion` | Apply a suggestion block to the working tree |
 | `complete_review` | Snapshot, mark the review done, and notify the browser; fails while any thread lacks a reply |
+| `reset` | Archive everything and delete unsent comments, so the user can start over |
+| `export_session` | Write the session, and by default this conversation, to a file for another clone |
+| `import_session` | Take over an exported session; the server must not be running |
 
 ### Hooks
 

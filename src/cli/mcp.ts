@@ -6,6 +6,7 @@ import { ApiError, NotRunningError, PostilClient } from '../core/client.ts';
 import { VERSION } from '../core/version.ts';
 import { formatPending, formatReview, formatUiThread } from './agent-format.ts';
 import { openBrowser, startDaemon, waitCommand } from './daemon.ts';
+import { describeExport, describeImport } from './transfer-format.ts';
 
 type ToolResult = { content: Array<{ type: 'text'; text: string }>; isError?: boolean };
 
@@ -203,6 +204,58 @@ export function createMcpServer(env: { projectDir: string; session: string | und
             'Drop any review you were working on; the user can find the old conversations under Archived.',
         );
       }),
+  );
+
+  server.registerTool(
+    'export_session',
+    {
+      title: 'Export the review session',
+      description:
+        "Write this repository's postil session to a file, so the user can carry it on in a clone on another computer " +
+        'with `postil import` or import_session. It holds the conversations, reviews, viewed marks, the snapshots they ' +
+        'need, local commits, and the working tree as it is. By default this Claude Code conversation goes along, so it ' +
+        'can be resumed there. Only when the user asks for it.',
+      inputSchema: {
+        file: z.string().optional().describe('Where to write it. Default: a timestamped file in the home directory.'),
+        include_conversation: z.boolean().optional().describe('Include this Claude Code conversation (default true).'),
+      },
+    },
+    async ({ file, include_conversation }) => {
+      const include = include_conversation !== false;
+      if (include && !env.session) return failure('postil: no Claude Code session id is available, so the conversation cannot be included. Call again with include_conversation false.');
+      try {
+        const { exportSession } = await import('../core/transfer.ts');
+        const r = await exportSession(env.projectDir, { ...(file !== undefined && { file }), ...(include && { claudeSession: env.session! }) });
+        return text(describeExport(r));
+      } catch (e) {
+        return failure(`postil: ${e instanceof Error ? e.message : String(e)}`);
+      }
+    },
+  );
+
+  server.registerTool(
+    'import_session',
+    {
+      title: 'Import a review session',
+      description:
+        'Take over a postil session that `postil export` or export_session wrote in another clone. The review server ' +
+        'must not be running here. Then call connect to listen. Only when the user asks for it.',
+      inputSchema: {
+        file: z.string().min(1),
+        worktree: z.boolean().optional().describe(
+          'Also bring the exported uncommitted changes into this working tree, which must have none of its own, fast-forwarding to the exported commit if needed.',
+        ),
+        force: z.boolean().optional().describe('Replace a session already under way here, keeping its database as a backup. Only when the user agrees.'),
+      },
+    },
+    async ({ file, worktree, force }) => {
+      try {
+        const { importSession } = await import('../core/transfer.ts');
+        return text(describeImport(await importSession(env.projectDir, file, { worktree: worktree ?? false, force: force ?? false })));
+      } catch (e) {
+        return failure(`postil: ${e instanceof Error ? e.message : String(e)}`);
+      }
+    },
   );
 
   return server;
