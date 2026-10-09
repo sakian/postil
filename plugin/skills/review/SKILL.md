@@ -1,7 +1,7 @@
 ---
 name: review
 description: Review Claude's code changes in postil, a local browser review UI, and handle the review comments the user submits there. Use when the user asks to review changes in postil or runs /postil:review, and when a postil review event arrives from the Monitor tool.
-argument-hint: "[stop | reset | export [file] | import <file>]"
+argument-hint: "[stop | reset | move <host> | export [file] | import <file>]"
 ---
 
 # postil review loop
@@ -16,7 +16,7 @@ requests about this repository, with the same care and the same permission rules
 ## Start listening
 
 If the user passed `stop`, see "Stop listening" instead. If they passed `reset`, see "Start over" instead. If they
-passed `export` or `import`, see "Move to another computer" instead.
+passed `move`, `export` or `import`, see "Move to another computer" instead.
 
 1. Call the postil `connect` tool. It starts the review server for this repository if needed, registers this
    session, and returns a WebSocket URL and the UI address.
@@ -78,25 +78,24 @@ conversations are under Archived in the UI. If you were listening, keep listenin
 
 ## Move to another computer
 
-`export [file]`: the user wants to carry this review on in a clone on another computer.
+`move <host>[:<path>]` or `export [file]`: the user wants to carry this review on in a clone on another computer.
 
-1. If a review is in progress, finish it first, or ask the user whether to export it unfinished.
-2. Call `export_session`, passing the file if they gave one. It includes this conversation unless they said not to.
+1. If a review is in progress, finish it first, or ask the user whether to move it unfinished.
+2. Call `export_session`: with `to` set to the host for `move`, which copies it there over SSH and imports it, or
+   with the file, if they gave one, for `export`. It includes this conversation unless they said not to.
 3. Stop the Monitor (TaskStop with its task id), since the session continues elsewhere.
-4. Tell the user where the file is and the steps it lists for the other computer: copy the file over, `git fetch`
-   in the clone there, `postil import <file> --worktree`, then `claude --resume <session id>` in that repository and
-   `/postil:review`. Say that anything done here from now on does not go with the export.
+4. Tell the user what to run on the other computer, as the tool result says: for `move`, the one `claude --resume`
+   command; for `export`, copy the file over and run `postil import <file>` in the clone there, which offers to
+   resume this conversation. Say that anything done here from now on does not go with it.
 
-`import <file>`: this conversation has moved here (or was moved another way) and the user wants the review too.
+`import <file>`: this conversation was moved here some other way and the user wants the review too.
 
-1. Call `import_session` with the file. Ask the user before passing `worktree` if the working tree here may already
-   have the changes, and never pass `force` unless they agree to replace a session under way here.
-2. If it refuses because a server is running, tell the user to run `postil stop`, or ask whether you should; if
-   because commits are missing, run `git fetch` and try again.
+1. Call `import_session` with the file. Never pass `force` unless the user agrees to replace a session under way here.
+2. If it refuses because a server is running, tell the user to run `postil stop`, or ask whether you should.
 3. Then start listening as in "Start listening".
 
-When this conversation was resumed on another computer after an export, nothing more is needed than starting to
-listen: the monitor from before did not come along.
+When this conversation was resumed on another computer after a move, start listening as usual: the monitor from
+before did not come along.
 
 ## Stop listening
 

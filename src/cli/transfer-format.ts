@@ -5,6 +5,12 @@ function size(bytes: number): string {
 }
 
 const short = (oid: string | null) => (oid ? oid.slice(0, 7) : 'no commit');
+const arg = (s: string) => (/^[\w./~:@%+-]+$/.test(s) ? s : JSON.stringify(s));
+
+/** The command that picks the conversation up again, and with it the review. */
+export function resumeCommand(session: string): string {
+  return `claude --resume ${session} /postil:review`;
+}
 
 export function describeExport(r: ExportResult): string {
   const m = r.manifest;
@@ -12,12 +18,9 @@ export function describeExport(r: ExportResult): string {
     `exported the postil session for ${m.root} to ${r.file} (${size(r.bytes)})`,
     `  branch:   ${m.branch ?? `detached at ${short(m.head)}`}`,
     `  snapshots: ${m.trees.length}, plus the working tree as it is now`,
-    `  Claude:   ${m.claude_session ? `conversation ${m.claude_session} included` : 'conversation not included (add --claude <session-id>)'}`,
+    `  Claude:   ${m.claude_session ? `conversation ${m.claude_session} included` : 'no conversation included'}`,
     '',
-    'In the clone on the other computer: git fetch, then',
-    `  postil import ${r.file.includes(' ') ? JSON.stringify(r.file) : r.file} --worktree`,
-    '--worktree also brings the uncommitted changes; leave it out if they reached that clone another way.',
-    ...(m.claude_session ? [`Then resume the conversation there with \`claude --resume ${m.claude_session}\` and run /postil:review.`] : []),
+    `Copy it to the other computer and run \`postil import ${arg(r.file)}\` in the clone there.`,
     'The session stays here too, but nothing done here from now on goes with the export.',
   ].join('\n');
 }
@@ -26,20 +29,20 @@ export function describeImport(r: ImportResult): string {
   const m = r.manifest;
   const worktree = {
     matches: 'matches the export',
-    restored: 'now has the uncommitted changes from the export',
-    differs: 'differs from the export. The review will show it as it is here; to bring the exported ' +
-      'uncommitted changes, import again with --worktree --force on a clean checkout',
+    restored: 'now has the exported changes',
+    differs: `left as it is, since ${r.worktreeNote ?? 'it differs'}. The review shows it as it is here`,
   }[r.worktree];
   return [
     `imported the postil session exported from ${m.host} at ${m.exported_at}`,
     `  branch:   ${m.branch ?? `detached at ${short(m.head)}`}`,
     `  working tree: ${worktree}`,
+    ...(r.fetched ? ['  fetched from the remotes first, for commits the export builds on'] : []),
     ...(r.backup ? [`  the previous database is kept at ${r.backup}`] : []),
     ...r.warnings.map((w) => `  warning: ${w}`),
     '',
     ...(r.transcript
       ? r.transcript.resumable
-        ? [`Resume the Claude Code conversation here with \`claude --resume ${m.claude_session}\` in the repository's top folder, then run /postil:review.`]
+        ? [`To carry on with Claude: cd ${arg(r.root)} && ${resumeCommand(m.claude_session!)}`]
         : [`The Claude Code conversation is saved at ${r.transcript.path}. Claude Code's folder for this path could not be worked out, so copy it there yourself, then resume it.`]
       : ['Run /postil:review in Claude Code here to pick the review up.']),
   ].join('\n');

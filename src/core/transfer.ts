@@ -113,8 +113,11 @@ async function findTranscript(session: string, projectPath: string): Promise<str
 export interface ExportOptions {
   /** Where to write the bundle. Defaults to a timestamped file in the home directory. */
   file?: string;
-  /** A Claude Code session id whose conversation goes along. */
-  claudeSession?: string;
+  /**
+   * The Claude Code session whose conversation goes along. By default, the one that listened for
+   * reviews here most recently, if its transcript is on this computer; null for none.
+   */
+  claudeSession?: string | null;
 }
 
 export interface ExportResult {
@@ -136,23 +139,20 @@ export async function exportSession(cwd: string, opts: ExportOptions = {}): Prom
   const file = resolve(cwd, opts.file ?? defaultExportFile(repo));
   if (existsSync(file)) throw new TransferError(`${file} already exists`);
 
-  let transcript: Buffer | null = null;
-  if (opts.claudeSession !== undefined) {
-    const path = await findTranscript(opts.claudeSession, repo.root);
-    if (!path) throw new TransferError(`no Claude Code conversation ${opts.claudeSession} was found under ${join(claudeConfigDir(), 'projects')}`);
-    transcript = await readFile(path);
-  }
-
   // VACUUM INTO writes a consistent copy even while the server is writing.
   const tmp = await mkdtemp(join(tmpdir(), 'postil-export-'));
   let db: Buffer;
   let schema: number;
+  let listeners: string[];
   try {
     const copy = join(tmp, 'postil.db');
     const conn = new DatabaseSync(dbPath);
     try {
       conn.exec('PRAGMA busy_timeout = 5000');
       schema = Number((conn.prepare('PRAGMA user_version').get() as { user_version: number }).user_version);
+      listeners = schema >= 2
+        ? (conn.prepare('SELECT session_id FROM listener ORDER BY last_seen DESC').all() as Array<{ session_id: string }>).map((r) => r.session_id)
+        : [];
       conn.prepare('VACUUM INTO ?').run(copy);
     } finally {
       conn.close();
@@ -160,6 +160,21 @@ export async function exportSession(cwd: string, opts: ExportOptions = {}): Prom
     db = await readFile(copy);
   } finally {
     await rm(tmp, { recursive: true, force: true });
+  }
+
+  let transcript: { session: string; content: Buffer } | null = null;
+  if (typeof opts.claudeSession === 'string') {
+    const path = await findTranscript(opts.claudeSession, repo.root);
+    if (!path) throw new TransferError(`no Claude Code conversation ${opts.claudeSession} was found under ${join(claudeConfigDir(), 'projects')}`);
+    transcript = { session: opts.claudeSession, content: await readFile(path) };
+  } else if (opts.claudeSession === undefined) {
+    for (const session of listeners) {
+      const path = await findTranscript(session, repo.root).catch(() => null);
+      if (path) {
+        transcript = { session, content: await readFile(path) };
+        break;
+      }
+    }
   }
 
   const ns = `${PIN_ROOT}${repo.worktreeId}/`;
@@ -178,7 +193,7 @@ export async function exportSession(cwd: string, opts: ExportOptions = {}): Prom
   const manifest: Manifest = {
     format: FORMAT, postil: VERSION, schema, exported_at: new Date().toISOString(), host: hostname(),
     repo: identity, root: repo.root, branch, head, worktree, base, trees, blobs,
-    claude_session: transcript ? opts.claudeSession! : null,
+    claude_session: transcript?.session ?? null,
   };
 
   const pinTrees = await mktree(repo, trees.map((t) => [t, '040000', 'tree', t]));
@@ -190,7 +205,7 @@ export async function exportSession(cwd: string, opts: ExportOptions = {}): Prom
     ['worktree', '040000', 'tree', worktree],
   ];
   if (transcript) {
-    entries.push(['claude', '040000', 'tree', await mktree(repo, [[`${manifest.claude_session}.jsonl`, '100644', 'blob', await hashBlob(repo, transcript)]])]);
+    entries.push(['claude', '040000', 'tree', await mktree(repo, [[`${manifest.claude_session}.jsonl`, '100644', 'blob', await hashBlob(repo, transcript.content)]])]);
   }
   const tree = await mktree(repo, entries);
 
@@ -216,15 +231,27 @@ export async function exportSession(cwd: string, opts: ExportOptions = {}): Prom
 export interface ImportOptions {
   /** Replace a session this clone already has under way, and import into a different repository. */
   force?: boolean;
-  /** Write the exported uncommitted changes into this working tree, which must be clean and on the same commit. */
+  /**
+   * Bring the exported working tree here, fast-forwarding to its commit first if need be (default
+   * true). Only done when this working tree has no changes of its own and the export builds on its
+   * commit; otherwise it is left alone and the result says why.
+   */
   worktree?: boolean;
+  /** Fetch from the remotes when this clone lacks commits the export builds on (default true). */
+  fetch?: boolean;
 }
 
 export type WorktreeState = 'matches' | 'restored' | 'differs';
 
 export interface ImportResult {
   manifest: Manifest;
+  /** This clone's top folder. */
+  root: string;
   worktree: WorktreeState;
+  /** Why a differing working tree was left alone. */
+  worktreeNote: string | null;
+  /** Fetched from the remotes first, for commits the export builds on. */
+  fetched: boolean;
   /** Where the previous database went, when this clone had one. */
   backup: string | null;
   /** Where the conversation was written, and the folder Claude Code looks in for it. */
@@ -299,16 +326,28 @@ export async function importSession(cwd: string, file: string, opts: ImportOptio
     if (!(e instanceof NotRunningError)) throw e;
   }
 
-  try {
-    await repo.run(['bundle', 'verify', path]);
-  } catch (e) {
-    if (!(e instanceof GitError)) throw e;
-    if (/prerequisite/i.test(e.stderr)) {
-      throw new TransferError(
-        `this clone lacks commits the export builds on. Fetch first (git fetch), so it has what the other clone had, then import again.\n${e.stderr.trim()}`,
-      );
+  const verify = async (): Promise<'ok' | 'missing'> => {
+    try {
+      await repo.run(['bundle', 'verify', path]);
+      return 'ok';
+    } catch (e) {
+      if (!(e instanceof GitError)) throw e;
+      if (/prerequisite/i.test(e.stderr)) return 'missing';
+      throw new TransferError(`${path} is not a postil export: ${e.stderr.trim()}`);
     }
-    throw new TransferError(`${path} is not a postil export: ${e.stderr.trim()}`);
+  };
+  let fetched = false;
+  if ((await verify()) === 'missing') {
+    const advice = 'this clone lacks commits the export builds on, which the other clone had from its remote. Fetch them (git fetch), then import again';
+    if (opts.fetch === false) throw new TransferError(advice);
+    try {
+      await repo.run(['fetch', '-q', '--all', '--no-tags']);
+    } catch (e) {
+      if (!(e instanceof GitError)) throw e;
+      throw new TransferError(`${advice}. Fetching here failed: ${e.stderr.trim()}`);
+    }
+    fetched = true;
+    if ((await verify()) === 'missing') throw new TransferError(`${advice}. They are not on its remotes either: has the other clone pushed them?`);
   }
   await repo.run(['fetch', '-q', '--no-tags', '--no-write-fetch-head', path, `+${EXPORT_REF}:${IMPORT_REF}`]);
 
@@ -349,19 +388,16 @@ export async function importSession(cwd: string, file: string, opts: ImportOptio
     let worktree: WorktreeState = current === manifest.worktree ? 'matches' : 'differs';
     // Bringing the working tree may first mean fast-forwarding to commits that never left the other clone.
     let fastForward = false;
-    if (worktree === 'differs' && opts.worktree) {
-      if (current !== (await headTree(repo, head))) {
-        throw new TransferError('this working tree has uncommitted changes; commit or stash them before restoring the exported ones');
-      }
-      if (head !== manifest.head) {
+    let worktreeNote: string | null = null;
+    if (worktree === 'differs') {
+      if (opts.worktree === false) {
+        worktreeNote = 'you asked to leave it alone';
+      } else if (current !== (await headTree(repo, head))) {
+        worktreeNote = 'it has uncommitted changes of its own';
+      } else if (head !== manifest.head) {
         const behind = manifest.head !== null && head !== null && (await repo.mergeBase(head, manifest.head)) === head;
-        if (!behind) {
-          throw new TransferError(
-            `this clone is at ${head?.slice(0, 7) ?? 'no commit'}, which the export (made at ${manifest.head?.slice(0, 7) ?? 'no commit'}) does not build on. ` +
-              `Check out ${manifest.branch ?? 'the branch it was made on'} first, then import again`,
-          );
-        }
-        fastForward = true;
+        if (behind) fastForward = true;
+        else worktreeNote = `it is at ${head?.slice(0, 7) ?? 'no commit'}, which the export does not build on; check out ${manifest.branch ?? 'the exported branch'}`;
       }
     }
 
@@ -379,7 +415,7 @@ export async function importSession(cwd: string, file: string, opts: ImportOptio
     // Keep the exported working tree too, so it can still be restored after gc.
     await repo.pin(manifest.worktree);
 
-    if (worktree === 'differs' && opts.worktree) {
+    if (worktree === 'differs' && worktreeNote === null) {
       if (fastForward) await repo.run(['merge', '-q', '--ff-only', manifest.head!]);
       await restoreWorktree(repo, await headTree(repo, await repo.head()), manifest.worktree);
       worktree = (await repo.worktreeTree()) === manifest.worktree ? 'restored' : 'differs';
@@ -407,7 +443,7 @@ export async function importSession(cwd: string, file: string, opts: ImportOptio
       }
     }
 
-    return { manifest, worktree, backup, transcript, warnings };
+    return { manifest, root: repo.root, worktree, worktreeNote, fetched, backup, transcript, warnings };
   } finally {
     await repo.run(['update-ref', '-d', IMPORT_REF]).catch(() => undefined);
   }

@@ -1,10 +1,11 @@
 import { strict as assert } from 'node:assert';
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync, mkdirSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { chmodSync, existsSync, readdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync, mkdirSync } from 'node:fs';
+import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, it } from 'node:test';
 import { Postil } from '../src/core/postil.ts';
+import { importScript, moveSession, parseTarget, remotePath } from '../src/cli/move.ts';
 import { claudeProjectDir, exportSession, importSession, TransferError } from '../src/core/transfer.ts';
 import { makeFixture, numbered, type Fixture } from './helpers.ts';
 
@@ -61,7 +62,7 @@ describe('moving a session to another clone', () => {
     assert.equal(exported.manifest.trees.length > 0, true);
     assert.equal(a.git('for-each-ref', 'refs/postil-export/'), '', 'the temporary ref is gone');
 
-    const r = await importSession(b.dir, file, { worktree: true });
+    const r = await importSession(b.dir, file);
     assert.equal(r.worktree, 'restored');
     assert.equal(r.backup, null);
     assert.equal(readFileSync(join(b.dir, 'f.txt'), 'utf8'), numbered(10, { 3: 'changed' }));
@@ -83,7 +84,7 @@ describe('moving a session to another clone', () => {
     }
   });
 
-  it('asks for a fetch when this clone lacks commits the export builds on', async () => {
+  it('fetches first when this clone lacks commits the export builds on', async () => {
     a.write('f.txt', numbered(10, { 1: 'pushed' }));
     a.commit('pushed later');
     a.git('push', '-q', 'origin', 'main');
@@ -91,10 +92,11 @@ describe('moving a session to another clone', () => {
     await startReview();
     const file = join(scratch, 'session.bundle');
     await exportSession(a.dir, { file });
-    await assert.rejects(importSession(b.dir, file), (e) => e instanceof TransferError && /git fetch/.test(e.message));
-    b.git('fetch', '-q', 'origin');
+    await assert.rejects(importSession(b.dir, file, { fetch: false }), (e) => e instanceof TransferError && /git fetch/.test(e.message));
     const r = await importSession(b.dir, file);
-    assert.equal(r.worktree, 'differs');
+    assert.equal(r.fetched, true);
+    // b's main is behind, so it fast-forwards through the pushed commit to the local one.
+    assert.equal(r.worktree, 'restored');
   });
 
   it('keeps a session already under way here unless forced, and backs it up', async () => {
@@ -110,9 +112,10 @@ describe('moving a session to another clone', () => {
       theirs.close();
     }
     await assert.rejects(importSession(b.dir, file), (e) => e instanceof TransferError && /under way/.test(e.message));
-    await assert.rejects(importSession(b.dir, file, { force: true, worktree: true }), (e) => e instanceof TransferError && /uncommitted/.test(e.message));
     const r = await importSession(b.dir, file, { force: true });
     assert.ok(r.backup && existsSync(r.backup));
+    assert.deepEqual([r.worktree, r.worktreeNote], ['differs', 'it has uncommitted changes of its own']);
+    assert.equal(readFileSync(join(b.dir, 'f.txt'), 'utf8'), numbered(10, { 5: 'mine' }), 'its own changes are left alone');
   });
 
   it('refuses a different repository unless forced', async () => {
@@ -123,14 +126,22 @@ describe('moving a session to another clone', () => {
     await assert.rejects(importSession(b.dir, file), (e) => e instanceof TransferError && /someone\/else/.test(e.message));
   });
 
-  it('brings the Claude Code conversation along', async () => {
+  it('brings along the Claude Code conversation that last listened', async () => {
     await startReview();
     const session = '0f0e0d0c-1111-2222-3333-444455556666';
     const from = claudeProjectDir(a.dir)!;
     mkdirSync(from, { recursive: true });
     writeFileSync(join(from, `${session}.jsonl`), '{"type":"user"}\n');
+    const postil = await Postil.open(a.dir);
+    try {
+      postil.listen('no-transcript-here');
+      postil.listen(session);
+    } finally {
+      postil.close();
+    }
+    assert.equal((await exportSession(a.dir, { file: join(scratch, 'none.bundle'), claudeSession: null })).manifest.claude_session, null);
     const file = join(scratch, 'session.bundle');
-    await exportSession(a.dir, { file, claudeSession: session });
+    assert.equal((await exportSession(a.dir, { file })).manifest.claude_session, session);
     // One machine stands in for two here, so drop the original as moving would.
     rmSync(from, { recursive: true });
 
@@ -138,5 +149,50 @@ describe('moving a session to another clone', () => {
     assert.deepEqual(r.transcript, { path: join(claudeProjectDir(b.dir)!, `${session}.jsonl`), resumable: true });
     assert.equal(readFileSync(r.transcript!.path, 'utf8'), '{"type":"user"}\n');
     await assert.rejects(exportSession(a.dir, { file: join(scratch, 'other.bundle'), claudeSession: 'missing' }), TransferError);
+  });
+
+  it('moves over SSH in one command', { skip: process.platform === 'win32' && 'needs a POSIX shell' }, async () => {
+    await startReview();
+    // Stand-ins for scp and ssh that "reach" this computer, with its own home directory.
+    const home = join(scratch, 'home');
+    const bin = join(scratch, 'bin');
+    mkdirSync(home);
+    mkdirSync(bin);
+    const shim = (name: string, body: string) => {
+      writeFileSync(join(bin, name), `#!/bin/sh\n${body}\n`);
+      chmodSync(join(bin, name), 0o755);
+    };
+    shim('scp', `while [ "$1" = -q ] || [ "$1" = -o ]; do [ "$1" = -o ] && shift; shift; done\ncp "$1" ${JSON.stringify(home)}/"\${2#*:}"`);
+    shim('ssh', `while [ "$1" = -o ]; do shift 2; done\nshift\nHOME=${JSON.stringify(home)} exec "$@"`);
+    shim('postil', `exec ${JSON.stringify(process.execPath)} ${JSON.stringify(join(import.meta.dirname, '..', 'src', 'cli', 'main.ts'))} "$@"`);
+    const path = process.env.PATH;
+    process.env.PATH = `${bin}:${path}`;
+    let log = '';
+    try {
+      const r = await moveSession(a.dir, `me@laptop:${b.dir}`, { claudeSession: null, interactive: false, output: (c) => { log += c; } });
+      assert.equal(r.host, 'me@laptop');
+    } finally {
+      process.env.PATH = path;
+    }
+    assert.match(log, /imported the postil session/);
+    assert.equal(readFileSync(join(b.dir, 'f.txt'), 'utf8'), numbered(10, { 3: 'changed' }));
+    assert.equal(existsSync(join(b.dir, '.git', 'postil', 'postil.db')), true);
+    assert.deepEqual(readdirSync(home), [], 'the copied file is removed once imported');
+  });
+});
+
+describe('postil move', () => {
+  it('finds the clone where this one is, relative to the home directory', () => {
+    assert.equal(remotePath(undefined, join(homedir(), 'src', 'repo')), '~/src/repo');
+    assert.equal(remotePath('/srv/repo', join(homedir(), 'src', 'repo')), '/srv/repo');
+    assert.deepEqual(parseTarget('me@box', join(homedir(), 'r')), { host: 'me@box', path: '~/r' });
+    assert.deepEqual(parseTarget('box:~/other', join(homedir(), 'r')), { host: 'box', path: '~/other' });
+    assert.throws(() => parseTarget('-oProxyCommand=x', '/r'), /not an SSH host/);
+  });
+
+  it('quotes paths for the shell over there', () => {
+    const script = importScript("~/it's here", 'f.bundle', { worktree: false });
+    assert.match(script, /^cd "\$HOME"\/'it'\\''s here'$/m);
+    assert.match(script, /^postil import --no-resume --no-worktree "\$HOME"\/'f\.bundle'$/m);
   });
 });

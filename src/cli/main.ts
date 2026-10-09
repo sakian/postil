@@ -30,16 +30,19 @@ Commands:
   reset                    Discard the review in progress to start a new one: archive every
                            conversation and review, delete unsent comments, clear viewed marks,
                            and tell a listening Claude session to drop it
-  export [<file>] [--claude <session-id>]
+  move <host>[:<path>]     Carry this review on in the clone on another computer, over SSH: export it,
+                           copy it there and import it. <path> defaults to where this clone is,
+                           relative to the home directory. That computer needs \`postil link\`
+  export [<file>] [--claude <session-id> | --claude none]
                            Write this clone's review session to a file (default: one in your home
-                           directory), to carry on in another clone with \`postil import\`. It holds
-                           the conversations, viewed marks, the snapshots they need, and the working
-                           tree as it is. --claude adds that Claude Code conversation
-  import <file> [--worktree] [--force]
-                           Take over a session from \`postil export\`. Fetch first, so this clone has
-                           the commits the other one had. --worktree also brings the exported
-                           commit and uncommitted changes into this working tree, which must have no
-                           changes of its own. --force replaces a session already under way here
+                           directory) for \`postil import\` in another clone: conversations, viewed
+                           marks, the snapshots they need, unpushed commits, the working tree, and
+                           the Claude Code conversation that last listened here
+  import <file> [--no-worktree] [--no-resume] [--force]
+                           Take over a session from \`postil export\`, fetching first if this clone
+                           lacks commits it builds on. Brings the exported working tree too when this
+                           one has no changes of its own, unless --no-worktree. Then offers to resume
+                           the Claude Code conversation. --force replaces a session under way here
   doctor                   Check Node, git, the UI build, the Claude Code plugin, and the server
   link [--dir <d>] [--force]
                            Put \`postil\` on your PATH (default ~/.local/bin) for use in your terminal
@@ -62,7 +65,8 @@ const COMMAND_OPTIONS: Record<string, string[]> = {
   base: ['branch', 'empty', 'reset'],
   link: ['dir', 'force'],
   export: ['claude'],
-  import: ['worktree', 'force'],
+  import: ['no-worktree', 'no-resume', 'force'],
+  move: ['claude', 'no-worktree', 'force'],
   wait: ['timeout'],
 };
 
@@ -82,7 +86,8 @@ async function main(argv: string[]): Promise<number> {
       timeout: { type: 'string' },
       force: { type: 'boolean' },
       claude: { type: 'string' },
-      worktree: { type: 'boolean' },
+      'no-worktree': { type: 'boolean' },
+      'no-resume': { type: 'boolean' },
       version: { type: 'boolean', short: 'v' },
       help: { type: 'boolean', short: 'h' },
     },
@@ -177,7 +182,7 @@ async function main(argv: string[]): Promise<number> {
     case 'export': {
       if (rest.length > 1) throw new UsageError('give at most one file to export to');
       const { exportSession } = await import('../core/transfer.ts');
-      const r = await exportSession(cwd, { ...(rest[0] !== undefined && { file: rest[0] }), ...(values.claude !== undefined && { claudeSession: values.claude }) });
+      const r = await exportSession(cwd, { ...(rest[0] !== undefined && { file: rest[0] }), ...claudeOption(values.claude) });
       const { describeExport } = await import('./transfer-format.ts');
       console.log(describeExport(r));
       return 0;
@@ -185,9 +190,24 @@ async function main(argv: string[]): Promise<number> {
     case 'import': {
       if (rest.length !== 1) throw new UsageError('give the file `postil export` wrote');
       const { importSession } = await import('../core/transfer.ts');
-      const r = await importSession(cwd, rest[0]!, { force: values.force ?? false, worktree: values.worktree ?? false });
+      const r = await importSession(cwd, rest[0]!, { force: values.force ?? false, worktree: !values['no-worktree'] });
       const { describeImport } = await import('./transfer-format.ts');
       console.log(describeImport(r));
+      if (r.transcript?.resumable && !values['no-resume'] && process.stdin.isTTY && process.stdout.isTTY) {
+        if (await confirm('\nResume the Claude Code conversation here now? [Y/n] ')) return resumeClaude(r.root, r.manifest.claude_session!);
+      }
+      return 0;
+    }
+    case 'move': {
+      if (rest.length !== 1) throw new UsageError('give the SSH host to move to, as host or host:path');
+      const { moveSession } = await import('./move.ts');
+      const { resumeCommand } = await import('./transfer-format.ts');
+      const r = await moveSession(cwd, rest[0]!, {
+        ...claudeOption(values.claude), worktree: !values['no-worktree'], force: values.force ?? false, interactive: process.stdin.isTTY === true,
+      });
+      const session = r.exported.manifest.claude_session;
+      console.log(`\nThe review continues on ${r.host} in ${r.path}.${session ? ` There: cd ${r.path} && ${resumeCommand(session)}` : ''}`);
+      console.log('It stays here too, but nothing done here from now on goes with it.');
       return 0;
     }
     case 'doctor':
@@ -207,6 +227,34 @@ async function main(argv: string[]): Promise<number> {
     default:
       throw new UsageError(`unknown command: ${command}`);
   }
+}
+
+/** --claude <id> picks the conversation, --claude none leaves it out; by default, the one that last listened. */
+function claudeOption(value: string | undefined): { claudeSession?: string | null } {
+  return value === undefined ? {} : { claudeSession: value === 'none' ? null : value };
+}
+
+async function confirm(question: string): Promise<boolean> {
+  const { createInterface } = await import('node:readline/promises');
+  const rl = createInterface({ input: process.stdin, output: process.stdout });
+  try {
+    return /^(y|yes|)$/i.test((await rl.question(question)).trim());
+  } finally {
+    rl.close();
+  }
+}
+
+/** Hand the terminal to Claude Code, resuming the conversation and the review loop with it. */
+async function resumeClaude(root: string, session: string): Promise<number> {
+  const { spawn } = await import('node:child_process');
+  return new Promise((done) => {
+    const child = spawn('claude', ['--resume', session, '/postil:review'], { cwd: root, stdio: 'inherit', shell: process.platform === 'win32' });
+    child.once('error', () => {
+      console.log(`Could not start claude. Run: cd ${root} && claude --resume ${session} /postil:review`);
+      done(1);
+    });
+    child.once('close', (code) => done(code ?? 0));
+  });
 }
 
 function parsePort(arg: string | undefined): number | undefined {
