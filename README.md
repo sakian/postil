@@ -95,8 +95,56 @@ postil keeps its state (reviews, comments, the server's address and token) in `.
 and pins the snapshots it needs under `refs/postil/`. It adds nothing to your working tree, and
 the server only listens on `127.0.0.1`.
 
-Other commands: `postil start`, `stop`, `status`, `open`, `url`, `base`, `archive`, `reset`, `doctor`, and
-`help`.
+### Moving to another computer
+
+To carry a review on in the clone on another computer you can reach over SSH, run
+`/postil:review move <host>` in the Claude session, or from a terminal:
+
+```sh
+postil move <host>             # or <host>:<path>, if the clone there is not where this one is
+```
+
+It exports the session, copies it over, and imports it in the clone there, which then takes one
+command to carry on, as it prints: `claude --resume <id> /postil:review`. The other computer needs
+`postil` linked (`postil link`) and a POSIX shell.
+
+Without SSH, use a folder you sync between your computers (Dropbox, iCloud Drive, Syncthing and so
+on). Point `POSTIL_TRANSFER_DIR` at it on both, for example in your shell profile:
+
+```sh
+export POSTIL_TRANSFER_DIR=~/Dropbox/postil
+```
+
+Then it takes two commands:
+
+```sh
+postil export                  # on this computer, or /postil:review export in the Claude session
+postil import                  # in the clone on the other computer, once the file has synced
+```
+
+The import takes the newest export of that repository from the folder, removes it once imported,
+and offers to resume the Claude Code conversation, which picks the review up with it. Without the
+folder, `postil export` writes the file to your home directory, and you copy it over and run
+`postil import <file>`.
+
+What moves: the conversations, reviews, viewed marks and the snapshots they need, commits you have
+not pushed, the working tree as it is (uncommitted and untracked files included), and the Claude
+Code conversation that last listened for reviews (`--claude <id>` picks another, `--claude none`
+leaves it out). What origin already has is left out, so the file stays small, and the import fetches
+it if the clone lacks it.
+
+The import brings the working tree along when the clone has no changes of its own, fast-forwarding
+its branch to the exported commit if it is behind; the changes show as unstaged. Otherwise, or with
+`--no-worktree`, it leaves the working tree alone and says why. It refuses while a review server is
+running in the clone (`postil stop`), or while the clone has a session of its own under way;
+`--force` replaces that one, keeping its database as `postil.db.before-import`.
+
+The browser tab does not move, but resuming with `/postil:review` opens a new one on the same scope
+and view. The session stays on the first computer as well, but nothing done there afterwards goes
+with it.
+
+Other commands: `postil start`, `stop`, `status`, `open`, `url`, `base`, `archive`, `reset`, `move`,
+`export`, `import`, `doctor`, and `help`.
 
 ## Features
 
@@ -130,8 +178,11 @@ Other commands: `postil start`, `stop`, `status`, `open`, `url`, `base`, `archiv
 - postil is installed from a checkout. It is not yet published to npm or a hosted plugin
   marketplace.
 - Tested on Linux and Windows.
-- Reviews and conversations live in one clone and are not shared between machines. Only the
-  history of finished sessions can be, through `POSTIL_HISTORY`.
+- Reviews and conversations live in one clone. They move to another with `postil move`, or
+  `postil export` and `postil import`, but are never synced between clones; only the history of finished sessions can be,
+  through `POSTIL_HISTORY`.
+- Carrying the Claude Code conversation relies on where Claude Code keeps transcripts
+  (`~/.claude/projects/`), which is not a stable interface.
 
 ## Development
 

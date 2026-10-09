@@ -319,10 +319,13 @@ export class Repo {
    * same reason. Correctness never depends on its prior contents: `git add -A` makes it match
    * the working tree, dropping ignored entries the real index does not track finishes the job, and
    * where core.fileMode is false, the executable bits are taken from the real index.
+   *
+   * The mutex only serialises this process, so another process, such as `postil export` beside a
+   * running server, passes its own `indexName`.
    */
-  async worktreeTree(): Promise<string> {
+  async worktreeTree(indexName = 'worktree.index'): Promise<string> {
     return this.indexMutex.run(async () => {
-      const index = join(this.stateDir, 'worktree.index');
+      const index = join(this.stateDir, indexName);
       try {
         return await this.buildTree(index, false);
       } catch (e) {
