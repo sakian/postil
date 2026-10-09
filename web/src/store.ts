@@ -85,6 +85,8 @@ interface State {
   collapsedDirs: string[];
   /** Files whose body the user folded (or unfolded, for viewed files) this session. */
   fileFold: Record<string, boolean>;
+  /** Markdown files the user switched to their rendered view this session. */
+  rendered: Record<string, boolean>;
   selection: Target | null;
   composer: Target | null;
   /** The file (by path) whose whole-file comment composer is open. */
@@ -143,6 +145,7 @@ interface Actions {
   toggleDir(path: string): void;
   setCollapsedDirs(paths: string[]): void;
   setFold(path: string, folded: boolean): void;
+  setRendered(path: string, rendered: boolean): void;
   /** Viewed means every section done: viewing marks them all, unviewing clears them unless `keepSections`. */
   setViewed(file: FileChange, viewed: boolean, opts?: { keepSections?: boolean }): Promise<void>;
   /** Mark many files viewed or not in one request, such as every file in a folder. */
@@ -299,6 +302,7 @@ export const useStore = create<Store>()((set, get) => {
     expanded: {},
     collapsedDirs: [],
     fileFold: {},
+    rendered: {},
     selection: null,
     composer: null,
     fileComposer: null,
@@ -598,6 +602,11 @@ export const useStore = create<Store>()((set, get) => {
     setFold(path, folded) {
       notePin(path);
       set((s) => ({ fileFold: { ...s.fileFold, [path]: folded } }));
+    },
+
+    setRendered(path, rendered) {
+      notePin(path);
+      set((s) => ({ rendered: { ...s.rendered, [path]: rendered } }));
     },
 
     async setViewed(file, viewed, opts = {}) {
