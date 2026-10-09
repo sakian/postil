@@ -1,7 +1,7 @@
 import { existsSync } from 'node:fs';
 import { mkdir, mkdtemp, readdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { homedir, hostname, tmpdir } from 'node:os';
-import { dirname, join, resolve, sep } from 'node:path';
+import { basename, dirname, join, resolve, sep } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { Store } from '../db/store.ts';
 import { MIGRATIONS } from '../db/schema.ts';
@@ -278,6 +278,8 @@ export interface ImportOptions {
   worktree?: boolean;
   /** Fetch from the remotes when this clone lacks commits the export builds on (default true). */
   fetch?: boolean;
+  /** Told of each step as it starts, since an import can take a while. */
+  progress?: (step: string) => void;
 }
 
 export type WorktreeState = 'matches' | 'restored' | 'differs';
@@ -392,10 +394,13 @@ export async function importSession(cwd: string, file: string | undefined, opts:
       throw new TransferError(`${path} is not a postil export${picked ? ', or has not finished syncing' : ''}: ${e.stderr.trim()}`);
     }
   };
+  const progress = opts.progress ?? (() => undefined);
+  progress(`Checking ${basename(path)}`);
   let fetched = false;
   if ((await verify()) === 'missing') {
     const advice = 'this clone lacks commits the export builds on, which the other clone had from its remote. Fetch them (git fetch), then import again';
     if (opts.fetch === false) throw new TransferError(advice);
+    progress('Fetching the commits it builds on from the remotes');
     try {
       await repo.run(['fetch', '-q', '--all', '--no-tags']);
     } catch (e) {
@@ -405,6 +410,7 @@ export async function importSession(cwd: string, file: string | undefined, opts:
     fetched = true;
     if ((await verify()) === 'missing') throw new TransferError(`${advice}. They are not on its remotes either: has the other clone pushed them?`);
   }
+  progress('Reading the export');
   await repo.run(['fetch', '-q', '--no-tags', '--no-write-fetch-head', path, `+${EXPORT_REF}:${IMPORT_REF}`]);
 
   try {
@@ -457,6 +463,7 @@ export async function importSession(cwd: string, file: string | undefined, opts:
       }
     }
 
+    progress('Bringing over the review');
     // The database, with whatever was here kept aside.
     let backup: string | null = null;
     if (await moveAside(dbPath)) backup = `${dbPath}${BACKUP_SUFFIX}`;
@@ -472,6 +479,7 @@ export async function importSession(cwd: string, file: string | undefined, opts:
     await repo.pin(manifest.worktree);
 
     if (worktree === 'differs' && worktreeNote === null) {
+      progress(fastForward ? `Fast-forwarding to ${manifest.head!.slice(0, 7)} and restoring the working tree` : 'Restoring the working tree');
       if (fastForward) await repo.run(['merge', '-q', '--ff-only', manifest.head!]);
       await restoreWorktree(repo, await headTree(repo, await repo.head()), manifest.worktree);
       worktree = (await repo.worktreeTree()) === manifest.worktree ? 'restored' : 'differs';

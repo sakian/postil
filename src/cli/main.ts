@@ -213,7 +213,10 @@ async function main(argv: string[]): Promise<number> {
       } else if (values.list) {
         throw new UsageError('--list needs POSTIL_TRANSFER_DIR, the folder exports are synced through');
       }
-      const r = await importSession(cwd, file, { force: values.force ?? false, worktree: !values['no-worktree'] });
+      const r = await importSession(cwd, file, {
+        force: values.force ?? false, worktree: !values['no-worktree'], progress: (step) => process.stderr.write(`${step}...
+`),
+      });
       const { describeImport } = await import('./transfer-format.ts');
       console.log(describeImport(r));
       if (r.transcript?.resumable && !values['no-resume'] && process.stdin.isTTY && process.stdout.isTTY) {
