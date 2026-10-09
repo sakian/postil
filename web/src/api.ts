@@ -87,6 +87,8 @@ export const api = {
     call<FileDiff>('GET', `/api/diff/file?${q({ old: oldBlob, new: newBlob, force: opts.force ? '1' : undefined })}`, undefined, opts.signal),
   /** A URL for an <img>: images cannot send headers, so the token rides in the query. */
   rawUrl: (oid: string, path: string) => `/api/blobs/${oid}/raw?${q({ path, token })}`,
+  /** Like `rawUrl`, for the file at `path` in a snapshot tree. */
+  treeRawUrl: (tree: string, path: string) => `/api/trees/${tree}/raw?${q({ path, token })}`,
   lines: (oid: string, start: number, end: number) =>
     call<{ lines: string[]; total: number; end: number }>('GET', `/api/blobs/${oid}/lines?${q({ start, end })}`),
 

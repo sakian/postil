@@ -194,16 +194,23 @@ export function createApp(postil: Postil, opts: AppOptions): Hono {
       }),
     );
   });
-  app.get('/api/blobs/:oid/raw', async (c) => {
-    const blob = oid.parse(c.req.param('oid'));
+  const raw = async (c: Context, blob: string, path: string) => {
     if ((await postil.repo.blobSize(blob)) > MAX_RAW_BYTES) throw new HttpError(413, 'blob too large to preview', 'too_large');
-    const ext = (c.req.query('path') ?? '').split('.').pop()?.toLowerCase() ?? '';
+    const ext = path.split('.').pop()?.toLowerCase() ?? '';
     const body = await postil.repo.readBlob(blob);
     c.header('content-type', RAW_TYPES[ext] ?? 'application/octet-stream');
     // Opened directly, an SVG could run script on this origin; the sandbox stops that.
     c.header('content-security-policy', "sandbox; default-src 'none'; style-src 'unsafe-inline'; img-src data:");
-    c.header('cache-control', 'private, max-age=31536000, immutable'); // blob ids are content addresses
+    c.header('cache-control', 'private, max-age=31536000, immutable'); // blob and tree ids are content addresses
     return c.body(new Uint8Array(body));
+  };
+  app.get('/api/blobs/:oid/raw', (c) => raw(c, oid.parse(c.req.param('oid')), c.req.query('path') ?? ''));
+  // A file by its path in a snapshot, for images a rendered Markdown file links to.
+  app.get('/api/trees/:oid/raw', async (c) => {
+    const path = z.string().min(1).parse(c.req.query('path'));
+    const entry = await postil.repo.entryAt(oid.parse(c.req.param('oid')), path);
+    if (entry?.type !== 'blob') throw new HttpError(404, 'no such file in this snapshot', 'not_found');
+    return raw(c, entry.oid, path);
   });
   app.get('/api/blobs/:oid/lines', async (c) => {
     const q = query(c, schemas.lines);
