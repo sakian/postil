@@ -137,6 +137,11 @@ export class Store {
     return (this.one("SELECT * FROM review WHERE status = 'draft'") as unknown as ReviewRow | undefined) ?? null;
   }
 
+  /** The id the draft has, or the one it will get: reviews are archived, never deleted, except an empty draft. */
+  draftReviewId(): number {
+    return this.getDraftReview()?.id ?? (this.one('SELECT COALESCE(MAX(id), 0) + 1 AS id FROM review') as { id: number }).id;
+  }
+
   getOrCreateDraftReview(): ReviewRow {
     return this.tx(() => {
       const existing = this.getDraftReview();

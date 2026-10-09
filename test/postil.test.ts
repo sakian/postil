@@ -201,6 +201,7 @@ describe('the review loop', () => {
   let reviewId: number;
 
   it('keeps comments as private drafts until submit', async () => {
+    const number = postil.draftNumber();
     const scope = await postil.resolveScope({ kind: 'all' });
     const t1 = await postil.createThread({
       from_tree: scope.from.tree, to_tree: scope.to.tree, path: 'src/retry.ts', side: 'new', start_line: 12, end_line: 13,
@@ -215,6 +216,7 @@ describe('the review loop', () => {
     assert.equal(t1.anchor_text, 'for (;;) retry();\n// no backoff');
     assert.deepEqual([t1.published, t1.awaiting, t1.comments[0]?.draft], [false, null, true]);
     assert.equal(postil.draft()?.comment_count, 2);
+    assert.equal(postil.draft()?.id, number, 'the number shown before the first comment is the one the review gets');
     assert.deepEqual(postil.pendingReviews(), []);
     assert.deepEqual(rec.agent(), [], 'drafts never reach Claude');
   });
@@ -227,6 +229,7 @@ describe('the review loop', () => {
     assert.ok(review.submit_tree);
     assert.ok((await postil.repo.pinnedTrees()).includes(review.submit_tree!), 'submit snapshot is pinned');
     assert.equal(postil.draft(), null);
+    assert.equal(postil.draftNumber(), review.id + 1);
     assert.deepEqual(rec.agent(), ['review.submitted']);
     const doorbell = rec.events.find((e) => e.event.type === 'review.submitted')!.event;
     assert.equal(doorbell.thread_count, 2);
