@@ -34,15 +34,18 @@ Commands:
                            copy it there and import it. <path> defaults to where this clone is,
                            relative to the home directory. That computer needs \`postil link\`
   export [<file>] [--claude <session-id> | --claude none]
-                           Write this clone's review session to a file (default: one in your home
-                           directory) for \`postil import\` in another clone: conversations, viewed
-                           marks, the snapshots they need, unpushed commits, the working tree, and
-                           the Claude Code conversation that last listened here
-  import <file> [--no-worktree] [--no-resume] [--force]
-                           Take over a session from \`postil export\`, fetching first if this clone
-                           lacks commits it builds on. Brings the exported working tree too when this
-                           one has no changes of its own, unless --no-worktree. Then offers to resume
-                           the Claude Code conversation. --force replaces a session under way here
+                           Write this clone's review session to a file (default: one in
+                           $POSTIL_TRANSFER_DIR, or else your home directory) for \`postil import\`
+                           in another clone: conversations, viewed marks, the snapshots they need,
+                           unpushed commits, the working tree, and the Claude Code conversation
+                           that last listened here
+  import [<file>] [--no-worktree] [--no-resume] [--force]
+                           Take over a session from \`postil export\`: by default the newest one of
+                           this repository in $POSTIL_TRANSFER_DIR, which is then removed. Fetches
+                           first if this clone lacks commits it builds on. Brings the exported
+                           working tree too when this one has no changes of its own, unless
+                           --no-worktree. Then offers to resume the Claude Code conversation.
+                           --force replaces a session under way here
   doctor                   Check Node, git, the UI build, the Claude Code plugin, and the server
   link [--dir <d>] [--force]
                            Put \`postil\` on your PATH (default ~/.local/bin) for use in your terminal
@@ -188,9 +191,9 @@ async function main(argv: string[]): Promise<number> {
       return 0;
     }
     case 'import': {
-      if (rest.length !== 1) throw new UsageError('give the file `postil export` wrote');
+      if (rest.length > 1) throw new UsageError('give at most one file to import');
       const { importSession } = await import('../core/transfer.ts');
-      const r = await importSession(cwd, rest[0]!, { force: values.force ?? false, worktree: !values['no-worktree'] });
+      const r = await importSession(cwd, rest[0], { force: values.force ?? false, worktree: !values['no-worktree'] });
       const { describeImport } = await import('./transfer-format.ts');
       console.log(describeImport(r));
       if (r.transcript?.resumable && !values['no-resume'] && process.stdin.isTTY && process.stdout.isTTY) {

@@ -108,9 +108,24 @@ It exports the session, copies it over, and imports it in the clone there, which
 command to carry on, as it prints: `claude --resume <id> /postil:review`. The other computer needs
 `postil` linked (`postil link`) and a POSIX shell.
 
-Without SSH, move it as a file: `postil export` (or `/postil:review export`) writes one to your
-home directory, and `postil import <file>` in the other clone takes it over and offers to resume
-the conversation there.
+Without SSH, use a folder you sync between your computers (Dropbox, iCloud Drive, Syncthing and so
+on). Point `POSTIL_TRANSFER_DIR` at it on both, for example in your shell profile:
+
+```sh
+export POSTIL_TRANSFER_DIR=~/Dropbox/postil
+```
+
+Then it takes two commands:
+
+```sh
+postil export                  # on this computer, or /postil:review export in the Claude session
+postil import                  # in the clone on the other computer, once the file has synced
+```
+
+The import takes the newest export of that repository from the folder, removes it once imported,
+and offers to resume the Claude Code conversation, which picks the review up with it. Without the
+folder, `postil export` writes the file to your home directory, and you copy it over and run
+`postil import <file>`.
 
 What moves: the conversations, reviews, viewed marks and the snapshots they need, commits you have
 not pushed, the working tree as it is (uncommitted and untracked files included), and the Claude

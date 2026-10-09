@@ -1,4 +1,5 @@
-import type { ExportResult, ImportResult } from '../core/transfer.ts';
+import { dirname } from 'node:path';
+import { transferDir, type ExportResult, type ImportResult } from '../core/transfer.ts';
 
 function size(bytes: number): string {
   return bytes < 1024 * 1024 ? `${Math.max(1, Math.round(bytes / 1024))} KB` : `${(bytes / 1024 / 1024).toFixed(1)} MB`;
@@ -14,13 +15,17 @@ export function resumeCommand(session: string): string {
 
 export function describeExport(r: ExportResult): string {
   const m = r.manifest;
+  const dir = transferDir();
+  const synced = dir !== null && dirname(r.file) === dir;
   return [
     `exported the postil session for ${m.root} to ${r.file} (${size(r.bytes)})`,
     `  branch:   ${m.branch ?? `detached at ${short(m.head)}`}`,
     `  snapshots: ${m.trees.length}, plus the working tree as it is now`,
     `  Claude:   ${m.claude_session ? `conversation ${m.claude_session} included` : 'no conversation included'}`,
     '',
-    `Copy it to the other computer and run \`postil import ${arg(r.file)}\` in the clone there.`,
+    synced
+      ? 'Once it has synced, run `postil import` in the clone on the other computer.'
+      : `Copy it to the other computer and run \`postil import ${arg(r.file)}\` in the clone there.`,
     'The session stays here too, but nothing done here from now on goes with the export.',
   ].join('\n');
 }
@@ -34,6 +39,7 @@ export function describeImport(r: ImportResult): string {
   }[r.worktree];
   return [
     `imported the postil session exported from ${m.host} at ${m.exported_at}`,
+    ...(r.consumed ? [`  removed ${r.file} from the transfer folder`] : []),
     `  branch:   ${m.branch ?? `detached at ${short(m.head)}`}`,
     `  working tree: ${worktree}`,
     ...(r.fetched ? ['  fetched from the remotes first, for commits the export builds on'] : []),

@@ -217,7 +217,7 @@ export function createMcpServer(env: { projectDir: string; session: string | und
         'a file for `postil import`. Only when the user asks for it.',
       inputSchema: {
         to: z.string().optional().describe('SSH host to move to, as host or host:path. The path defaults to where this clone is, relative to the home directory.'),
-        file: z.string().optional().describe('Without `to`: where to write the file. Default: a timestamped file in the home directory.'),
+        file: z.string().optional().describe('Without `to`: where to write the file. Default: a timestamped file in $POSTIL_TRANSFER_DIR, or else the home directory.'),
         include_conversation: z.boolean().optional().describe('Include this Claude Code conversation (default true).'),
       },
     },
@@ -253,7 +253,7 @@ export function createMcpServer(env: { projectDir: string; session: string | und
         'Take over a postil session that `postil export` or export_session wrote in another clone, fetching first if ' +
         'commits are missing. The review server must not be running here. Then call connect to listen. Only when the user asks for it.',
       inputSchema: {
-        file: z.string().min(1),
+        file: z.string().min(1).optional().describe('Default: the newest export of this repository in $POSTIL_TRANSFER_DIR.'),
         worktree: z.boolean().optional().describe(
           'Bring the exported working tree here when this one has no changes of its own (default true).',
         ),

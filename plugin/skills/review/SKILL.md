@@ -85,12 +85,13 @@ conversations are under Archived in the UI. If you were listening, keep listenin
    with the file, if they gave one, for `export`. It includes this conversation unless they said not to.
 3. Stop the Monitor (TaskStop with its task id), since the session continues elsewhere.
 4. Tell the user what to run on the other computer, as the tool result says: for `move`, the one `claude --resume`
-   command; for `export`, copy the file over and run `postil import <file>` in the clone there, which offers to
-   resume this conversation. Say that anything done here from now on does not go with it.
+   command; for `export`, what the result says: with a synced transfer folder, just `postil import` in the clone
+   there once the file has synced, or else copy the file over and `postil import <file>`. Either offers to resume
+   this conversation. Say that anything done here from now on does not go with it.
 
 `import <file>`: this conversation was moved here some other way and the user wants the review too.
 
-1. Call `import_session` with the file. Never pass `force` unless the user agrees to replace a session under way here.
+1. Call `import_session` with the file, or without one to take the newest export from the synced transfer folder. Never pass `force` unless the user agrees to replace a session under way here.
 2. If it refuses because a server is running, tell the user to run `postil stop`, or ask whether you should.
 3. Then start listening as in "Start listening".
 

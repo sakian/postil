@@ -1,5 +1,6 @@
 import { existsSync } from 'node:fs';
 import { mkdir, mkdtemp, readdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
 import { homedir, hostname, tmpdir } from 'node:os';
 import { basename, join, resolve, sep } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
@@ -126,9 +127,34 @@ export interface ExportResult {
   bytes: number;
 }
 
-function defaultExportFile(repo: Repo): string {
-  const stamp = new Date().toISOString().slice(0, 16).replace(/[-:]/g, '').replace('T', '-');
-  return join(homedir(), `postil-${basename(repo.root).replace(/[^\w.-]/g, '_')}-${stamp}.bundle`);
+/** A folder synced between computers: exports go there by default, and imports look there. */
+export function transferDir(): string | null {
+  const dir = process.env.POSTIL_TRANSFER_DIR?.trim();
+  return dir ? resolve(dir) : null;
+}
+
+/** Exports of one repository share a tag in their names, so an import finds its own among others'. */
+function repoTag(identity: string | null): string {
+  return createHash('sha256').update(identity ?? 'no identity').digest('hex').slice(0, 10);
+}
+
+const EXPORT_NAME = /-([0-9a-f]{10})-(\d{8}-\d{6})\.bundle$/;
+
+function exportName(repo: Repo, identity: string | null): string {
+  const stamp = new Date().toISOString().slice(0, 19).replace(/[-:]/g, '').replace('T', '-');
+  return `postil-${basename(repo.root).replace(/[^\w.-]/g, '_')}-${repoTag(identity)}-${stamp}.bundle`;
+}
+
+/** The newest export of this repository in the transfer folder, or null. */
+export async function latestExport(cwd: string): Promise<string | null> {
+  const dir = transferDir();
+  if (!dir) return null;
+  const tag = repoTag(await repoIdentity(await Repo.open(cwd)));
+  const mine = (await readdir(dir).catch(() => [] as string[]))
+    .map((name) => ({ name, m: EXPORT_NAME.exec(name) }))
+    .filter((e) => e.m?.[1] === tag)
+    .sort((x, y) => (x.m![2]! < y.m![2]! ? 1 : -1));
+  return mine[0] ? join(dir, mine[0].name) : null;
 }
 
 /** Bundle this clone's postil session. Safe beside a running server: nothing here changes. */
@@ -136,7 +162,10 @@ export async function exportSession(cwd: string, opts: ExportOptions = {}): Prom
   const repo = await Repo.open(cwd);
   const dbPath = join(repo.stateDir, 'postil.db');
   if (!existsSync(dbPath)) throw new TransferError(`postil has not been used in ${repo.root}, so there is nothing to export`);
-  const file = resolve(cwd, opts.file ?? defaultExportFile(repo));
+  const identity = await repoIdentity(repo);
+  const dir = transferDir();
+  if (opts.file === undefined && dir) await mkdir(dir, { recursive: true });
+  const file = resolve(cwd, opts.file ?? join(dir ?? homedir(), exportName(repo, identity)));
   if (existsSync(file)) throw new TransferError(`${file} already exists`);
 
   // VACUUM INTO writes a consistent copy even while the server is writing.
@@ -178,13 +207,12 @@ export async function exportSession(cwd: string, opts: ExportOptions = {}): Prom
   }
 
   const ns = `${PIN_ROOT}${repo.worktreeId}/`;
-  const [trees, blobs, base, head, branch, identity] = await Promise.all([
+  const [trees, blobs, base, head, branch] = await Promise.all([
     refsUnder(repo, `${ns}trees/`),
     refsUnder(repo, `${ns}blobs/`),
     refTarget(repo, `${ns}base`),
     repo.head(),
     repo.currentBranch(),
-    repoIdentity(repo),
   ]);
   // Its own index, so this never races a running server over the shared one.
   const worktree = await repo.worktreeTree('export.index');
@@ -245,6 +273,9 @@ export type WorktreeState = 'matches' | 'restored' | 'differs';
 
 export interface ImportResult {
   manifest: Manifest;
+  /** The export imported, and whether it was removed from the transfer folder afterwards. */
+  file: string;
+  consumed: boolean;
   /** This clone's top folder. */
   root: string;
   worktree: WorktreeState;
@@ -315,9 +346,23 @@ async function moveAside(path: string): Promise<boolean> {
   return true;
 }
 
-export async function importSession(cwd: string, file: string, opts: ImportOptions = {}): Promise<ImportResult> {
+/**
+ * Take over an exported session. Without a file, the newest export of this repository in the
+ * transfer folder, which is removed once imported so the folder does not fill up.
+ */
+export async function importSession(cwd: string, file: string | undefined, opts: ImportOptions = {}): Promise<ImportResult> {
   const repo = await Repo.open(cwd);
-  const path = resolve(cwd, file);
+  let path: string;
+  const picked = file === undefined;
+  if (file === undefined) {
+    const dir = transferDir();
+    if (!dir) throw new TransferError('give the file `postil export` wrote, or set POSTIL_TRANSFER_DIR to a folder synced between your computers');
+    const latest = await latestExport(cwd);
+    if (!latest) throw new TransferError(`there is no export of this repository in ${dir} (yet: it may still be syncing)`);
+    path = latest;
+  } else {
+    path = resolve(cwd, file);
+  }
   if (!existsSync(path)) throw new TransferError(`${path} does not exist`);
   try {
     await PostilClient.connect(cwd, { probeTimeoutMs: 800 });
@@ -333,7 +378,7 @@ export async function importSession(cwd: string, file: string, opts: ImportOptio
     } catch (e) {
       if (!(e instanceof GitError)) throw e;
       if (/prerequisite/i.test(e.stderr)) return 'missing';
-      throw new TransferError(`${path} is not a postil export: ${e.stderr.trim()}`);
+      throw new TransferError(`${path} is not a postil export${picked ? ', or has not finished syncing' : ''}: ${e.stderr.trim()}`);
     }
   };
   let fetched = false;
@@ -443,7 +488,9 @@ export async function importSession(cwd: string, file: string, opts: ImportOptio
       }
     }
 
-    return { manifest, root: repo.root, worktree, worktreeNote, fetched, backup, transcript, warnings };
+    let consumed = false;
+    if (picked) consumed = await rm(path).then(() => true, () => false);
+    return { manifest, file: path, consumed, root: repo.root, worktree, worktreeNote, fetched, backup, transcript, warnings };
   } finally {
     await repo.run(['update-ref', '-d', IMPORT_REF]).catch(() => undefined);
   }

@@ -2,12 +2,15 @@ import { strict as assert } from 'node:assert';
 import { execFileSync } from 'node:child_process';
 import { chmodSync, existsSync, readdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync, mkdirSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { afterEach, beforeEach, describe, it } from 'node:test';
 import { Postil } from '../src/core/postil.ts';
 import { importScript, moveSession, parseTarget, remotePath } from '../src/cli/move.ts';
 import { claudeProjectDir, exportSession, importSession, TransferError } from '../src/core/transfer.ts';
 import { makeFixture, numbered, type Fixture } from './helpers.ts';
+
+/** A file's text with line endings as git stores them, since Windows checkouts may write CRLF. */
+const text = (path: string) => readFileSync(path, 'utf8').replace(/\r\n/g, '\n');
 
 describe('moving a session to another clone', () => {
   let scratch: string;
@@ -34,6 +37,7 @@ describe('moving a session to another clone', () => {
 
   afterEach(() => {
     delete process.env.CLAUDE_CONFIG_DIR;
+    delete process.env.POSTIL_TRANSFER_DIR;
     a.cleanup();
     b.cleanup();
     rmSync(scratch, { recursive: true, force: true });
@@ -65,8 +69,8 @@ describe('moving a session to another clone', () => {
     const r = await importSession(b.dir, file);
     assert.equal(r.worktree, 'restored');
     assert.equal(r.backup, null);
-    assert.equal(readFileSync(join(b.dir, 'f.txt'), 'utf8'), numbered(10, { 3: 'changed' }));
-    assert.equal(readFileSync(join(b.dir, 'new.txt'), 'utf8'), 'untracked\n');
+    assert.equal(text(join(b.dir, 'f.txt')), numbered(10, { 3: 'changed' }));
+    assert.equal(text(join(b.dir, 'new.txt')), 'untracked\n');
     assert.equal(b.git('rev-parse', 'HEAD').trim(), a.git('rev-parse', 'HEAD').trim(), 'the local commit came along');
     assert.equal(b.git('for-each-ref', 'refs/postil-import/'), '');
 
@@ -115,7 +119,7 @@ describe('moving a session to another clone', () => {
     const r = await importSession(b.dir, file, { force: true });
     assert.ok(r.backup && existsSync(r.backup));
     assert.deepEqual([r.worktree, r.worktreeNote], ['differs', 'it has uncommitted changes of its own']);
-    assert.equal(readFileSync(join(b.dir, 'f.txt'), 'utf8'), numbered(10, { 5: 'mine' }), 'its own changes are left alone');
+    assert.equal(text(join(b.dir, 'f.txt')), numbered(10, { 5: 'mine' }), 'its own changes are left alone');
   });
 
   it('refuses a different repository unless forced', async () => {
@@ -151,6 +155,34 @@ describe('moving a session to another clone', () => {
     await assert.rejects(exportSession(a.dir, { file: join(scratch, 'other.bundle'), claudeSession: 'missing' }), TransferError);
   });
 
+  it('goes through a synced folder, where import finds the newest export of its repository', async () => {
+    await startReview();
+    const dir = join(scratch, 'synced');
+    process.env.POSTIL_TRANSFER_DIR = dir;
+    await assert.rejects(importSession(b.dir, undefined), (e) => e instanceof TransferError && /no export of this repository/.test(e.message));
+
+    const older = await exportSession(a.dir);
+    assert.equal(dirname(older.file), dir);
+    await new Promise((r) => setTimeout(r, 1100)); // names carry the time to the second
+    const newer = await exportSession(a.dir);
+    const other = makeFixture();
+    try {
+      other.write('x', '1\n');
+      other.commit('other repository');
+      await Postil.open(other.dir).then((p) => p.close());
+      await exportSession(other.dir);
+    } finally {
+      other.cleanup();
+    }
+
+    const r = await importSession(b.dir, undefined);
+    assert.equal(r.file, newer.file);
+    assert.equal(r.consumed, true);
+    assert.equal(existsSync(newer.file), false, 'removed once imported');
+    assert.equal(existsSync(older.file), true);
+    assert.equal(readdirSync(dir).length, 2, "the other repository's export is left alone");
+  });
+
   it('moves over SSH in one command', { skip: process.platform === 'win32' && 'needs a POSIX shell' }, async () => {
     await startReview();
     // Stand-ins for scp and ssh that "reach" this computer, with its own home directory.
@@ -175,7 +207,7 @@ describe('moving a session to another clone', () => {
       process.env.PATH = path;
     }
     assert.match(log, /imported the postil session/);
-    assert.equal(readFileSync(join(b.dir, 'f.txt'), 'utf8'), numbered(10, { 3: 'changed' }));
+    assert.equal(text(join(b.dir, 'f.txt')), numbered(10, { 3: 'changed' }));
     assert.equal(existsSync(join(b.dir, '.git', 'postil', 'postil.db')), true);
     assert.deepEqual(readdirSync(home), [], 'the copied file is removed once imported');
   });
