@@ -4,7 +4,7 @@ import remarkGfm from 'remark-gfm';
 import { highlight, renderTokens, type Token } from '../highlight/index.tsx';
 
 /** A fenced code block, coloured once its tokens arrive from the worker. */
-function Code({ source, lang }: { source: string; lang: string | undefined }) {
+export function Code({ source, lang }: { source: string; lang: string | undefined }) {
   const [tokens, setTokens] = useState<Token[][] | null>(null);
   useEffect(() => {
     let live = true;

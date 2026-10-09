@@ -8,6 +8,7 @@ export const KEYMAP: Array<[string, string]> = [
   ['f', 'Fold or unfold the current file'],
   ['e / E', 'Expand / collapse all context in the current file'],
   ['s', 'Switch between unified and split view'],
+  ['m', 'Show the current Markdown file rendered, or its source'],
   ['c', 'Open conversations'],
   ['r', 'Finish your review'],
   ['?', 'Show this help'],
@@ -109,6 +110,9 @@ export function handleKey(e: KeyboardEvent, showHelp: (show: boolean) => void): 
       return true;
     case 'E':
       clickIn(currentFile(), '[data-action="collapse-all"]');
+      return true;
+    case 'm':
+      clickIn(currentFile(), '[data-action="rendered"]');
       return true;
     case 'c':
       s.setPanel(s.panel === 'threads' ? null : 'threads');
