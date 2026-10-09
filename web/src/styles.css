@@ -316,7 +316,8 @@ li + li { margin-top: 2px; }
   position: absolute; left: -28px; top: 2px; width: 18px; height: 18px; padding: 0; border: none; border-radius: 4px;
   background: var(--accent); color: #fff; display: none; align-items: center; justify-content: center; cursor: pointer; z-index: 1;
 }
-
+/* An invisible strip over the margin, so the pointer stays on the block on its way to the button. */
+.md-block::before { content: ''; position: absolute; top: 0; bottom: 0; left: -32px; width: 32px; }
 .md-block:hover > .md-add-comment { display: inline-flex; }
 .md-attach { margin: 6px 0 10px; font-size: 14px; line-height: 1.5; }
 .md-block.removed-before { box-shadow: inset 0 2px 0 var(--del-fg); }
