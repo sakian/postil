@@ -424,6 +424,7 @@ export function DiffPane() {
   const resolveError = useStore((s) => s.resolveError);
   const threads = useStore((s) => s.threads);
   const focusThread = useStore((s) => s.focusThread);
+  const hideResolved = useStore((s) => s.hideResolved);
   const { revealFile } = useStore.getState();
 
   const files = useMemo(() => (resolved ? fileOrder(buildTree(resolved.files)) : []), [resolved]);
@@ -431,11 +432,13 @@ export function DiffPane() {
     const m = new Map<string, ThreadView[]>();
     if (!resolved) return m;
     for (const t of threads) {
+      // A hidden resolved conversation still shows when picked from the panel, or while it has an unsent reply.
+      if (hideResolved && t.status === 'resolved' && t.id !== focusThread && !t.comments.some((c) => c.draft)) continue;
       const f = threadFile(t, resolved.files);
       if (f) m.set(f.path, [...(m.get(f.path) ?? []), t]);
     }
     return m;
-  }, [threads, resolved]);
+  }, [threads, resolved, hideResolved, focusThread]);
 
   // "Show in diff" and n/p may point at a file that is not mounted; bring it in first.
   useEffect(() => {

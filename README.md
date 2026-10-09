@@ -154,7 +154,8 @@ Other commands: `postil start`, `stop`, `status`, `open`, `url`, `base`, `archiv
 - Unified and split diffs, with context you can expand and collapse again, syntax highlighting,
   changed words highlighted within lines, and image previews.
 - Comments on any line range, sent as a review. Claude replies in each thread and may flag one
-  as needing your decision; only you resolve threads.
+  as needing your decision; only you resolve threads. Resolved threads leave the diff unless you
+  untick **Hide resolved**, and stay listed in the Conversations panel.
 - Suggestions in comments apply with one click, or Claude can apply them.
 - Markdown files can be reviewed rendered (**Rendered** on the file, or `m`). Changed blocks are
   marked, and a comment on a paragraph, list item, table or code block is a comment on its source

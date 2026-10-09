@@ -82,6 +82,8 @@ interface State {
   viewed: Set<string>;
 
   view: ViewMode;
+  /** Resolved conversations stay out of the diff; the Conversations panel still lists them. */
+  hideResolved: boolean;
   /** Revealed gap lines per new-blob id, so expansion survives reloads and resets when content changes. */
   expanded: Record<string, Range[]>;
   collapsedDirs: string[];
@@ -140,6 +142,7 @@ interface Actions {
   loadTokens(oid: string, path: string, total: number): Promise<void>;
 
   setView(view: ViewMode): void;
+  setHideResolved(hide: boolean): void;
   expand(file: FileChange, range: Range): Promise<void>;
   collapse(blob: string, range: Range): void;
   expandFile(file: FileChange, total: number): Promise<void>;
@@ -184,7 +187,7 @@ export type Store = State & Actions;
 
 // ---------------------------------------------------------------------------- persistence
 
-const PERSISTED = { view: 'view', scope: 'scope', expanded: 'expanded', tree: 'tree.collapsed' } as const;
+const PERSISTED = { view: 'view', scope: 'scope', expanded: 'expanded', tree: 'tree.collapsed', hideResolved: 'resolved.hidden' } as const;
 const timers = new Map<string, ReturnType<typeof setTimeout>>();
 
 /** Save UI state server-side, debounced, so a review can be resumed from any tab later. */
@@ -302,6 +305,7 @@ export const useStore = create<Store>()((set, get) => {
     draftNumber: null,
     viewed: new Set(),
     view: 'unified',
+    hideResolved: true,
     expanded: {},
     collapsedDirs: [],
     fileFold: {},
@@ -323,18 +327,20 @@ export const useStore = create<Store>()((set, get) => {
 
     async boot() {
       try {
-        const [health, view, scope, expanded, tree, history] = await Promise.all([
+        const [health, view, scope, expanded, tree, hideResolved, history] = await Promise.all([
           api.health(),
           api.uiState<ViewMode>(PERSISTED.view),
           api.uiState<Scope>(PERSISTED.scope),
           api.uiState<Record<string, Range[]>>(PERSISTED.expanded),
           api.uiState<string[]>(PERSISTED.tree),
+          api.uiState<boolean>(PERSISTED.hideResolved),
           api.history().catch(() => null),
         ]);
         set({
           health,
           listening: health.listening,
           view: view.value ?? 'unified',
+          hideResolved: hideResolved.value ?? true,
           scope: scope.value ?? defaultScope(history),
           history,
           expanded: expanded.value ?? {},
@@ -558,6 +564,11 @@ export const useStore = create<Store>()((set, get) => {
     setView(view) {
       set({ view, selection: null, composer: null });
       persist(PERSISTED.view, view);
+    },
+
+    setHideResolved(hide) {
+      set({ hideResolved: hide });
+      persist(PERSISTED.hideResolved, hide);
     },
 
     async expand(file, range) {

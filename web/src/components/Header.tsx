@@ -138,7 +138,8 @@ export function Header() {
   const draft = useStore((s) => s.draft);
   const panel = useStore((s) => s.panel);
   const threads = useStore((s) => s.threads);
-  const { setView, setPanel } = useStore.getState();
+  const hideResolved = useStore((s) => s.hideResolved);
+  const { setView, setPanel, setHideResolved } = useStore.getState();
   const yourTurn = threads.filter(isYourTurn).length;
   const wrap = useWrapUp();
   const pending = draft?.comment_count ?? 0;
@@ -155,6 +156,9 @@ export function Header() {
         <button className={view === 'unified' ? 'active' : ''} onClick={() => setView('unified')} title="Unified view (S)">Unified</button>
         <button className={view === 'split' ? 'active' : ''} onClick={() => setView('split')} title="Split view (S)">Split</button>
       </div>
+      <label className="option" title="Keep resolved conversations out of the diff. The Conversations panel still lists them.">
+        <input type="checkbox" checked={hideResolved} onChange={(e) => setHideResolved(e.target.checked)} /> Hide resolved
+      </label>
       <button className={`btn${panel === 'threads' ? ' active' : ''}`} onClick={() => setPanel(panel === 'threads' ? null : 'threads')}>
         Conversations{yourTurn > 0 && <span className="count">{yourTurn}</span>}
       </button>
