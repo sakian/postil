@@ -3,11 +3,13 @@ import type { FileChange, ThreadView } from '../../../src/core/api-types.ts';
 import { api } from '../api.ts';
 import { diffKey, markKey, placement, shortSha, threadFile, viewedBlob } from '../format.ts';
 import { fileAnchor, takePin } from '../lib/pin.ts';
+import { isMarkdown } from '../lib/mdblocks.ts';
 import { fileSections, sectionDone, validMarks } from '../lib/sections.ts';
 import { buildTree, fileOrder } from '../lib/tree.ts';
 import { useStore } from '../store.ts';
 import { DiffTable } from './DiffTable.tsx';
 import { Icon } from './icons.tsx';
+import { RenderedMarkdown } from './RenderedMarkdown.tsx';
 import { FileComposer, ThreadWidget } from './Thread.tsx';
 
 /** Files with more changed lines than this start collapsed behind a "Load diff" button. */
@@ -56,14 +58,16 @@ function FileView({ file, threads }: { file: FileChange; threads: ThreadView[] }
   const focusThread = useStore((s) => s.focusThread);
   const hasRevealed = useStore((s) => (file.new_blob ? (s.expanded[file.new_blob]?.length ?? 0) > 0 : false));
   const composingFile = useStore((s) => s.fileComposer === file.path);
-  const { loadDiff, setViewed, setFold, expandFile, collapseFile, openFileComposer } = useStore.getState();
+  const renderable = file.kind === 'text' && file.new_blob !== null && isMarkdown(file.path);
+  const rendered = useStore((s) => renderable && (s.rendered[file.path] ?? false));
+  const { loadDiff, setViewed, setFold, setRendered, expandFile, collapseFile, openFileComposer } = useStore.getState();
   const folded = fold ?? viewed;
   const ref = useRef<HTMLElement>(null);
 
   // Folded from partway through (see lib/pin.ts): bring this file's start back to the top.
   useLayoutEffect(() => {
     if (takePin(file.path)) ref.current?.scrollIntoView({ block: 'start' });
-  }, [folded, file.path]);
+  }, [folded, rendered, file.path]);
   const bodyRef = useRef<HTMLDivElement>(null);
   /** Within about two screens of the viewport. Bodies outside that are swapped for a placeholder. */
   const [near, setNear] = useState(false);
@@ -180,6 +184,8 @@ function FileView({ file, threads }: { file: FileChange; threads: ThreadView[] }
     );
   } else if (ready && ready.hunks.length === 0) {
     body = <div className="file-note muted">{file.status === 'renamed' ? 'File renamed without changes.' : file.old_mode !== file.new_mode ? `File mode changed from ${file.old_mode} to ${file.new_mode}.` : 'No content changes.'}</div>;
+  } else if (ready && rendered) {
+    body = <RenderedMarkdown file={file} diff={ready} threads={groups.inline} />;
   } else if (ready) {
     body = <DiffTable file={file} diff={ready} threads={groups.inline} />;
   }
@@ -210,7 +216,13 @@ function FileView({ file, threads }: { file: FileChange; threads: ThreadView[] }
           title="Comment on the whole file">
           <Icon name="comment" size={14} /> Comment
         </button>
-        {ready && ready.new_lines !== null && ready.hunks.length > 0 && !folded && (
+        {renderable && !folded && (
+          <button className={`btn btn-small${rendered ? ' active' : ''}`} data-action="rendered" onClick={() => setRendered(file.path, !rendered)}
+            title={rendered ? 'Show the diff of the source' : 'Show the file rendered, and comment on its blocks'} aria-pressed={rendered}>
+            <Icon name={rendered ? 'code' : 'eye'} size={14} /> {rendered ? 'Source' : 'Rendered'}
+          </button>
+        )}
+        {ready && ready.new_lines !== null && ready.hunks.length > 0 && !folded && !rendered && (
           <>
             <button className="btn btn-small" data-action="expand-all" onClick={() => void expandFile(file, ready.new_lines!)} title="Show the whole file (e)">
               <Icon name="unfold" size={14} /> Expand all
