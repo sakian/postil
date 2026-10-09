@@ -39,9 +39,10 @@ Commands:
                            in another clone: conversations, viewed marks, the snapshots they need,
                            unpushed commits, the working tree, and the Claude Code conversation
                            that last listened here
-  import [<file>] [--no-worktree] [--no-resume] [--force]
-                           Take over a session from \`postil export\`: by default the newest one of
-                           this repository in $POSTIL_TRANSFER_DIR, which is then removed. Fetches
+  import [<file>] [--list] [--no-worktree] [--no-resume] [--force]
+                           Take over a session from \`postil export\`: by default one of this
+                           repository's in $POSTIL_TRANSFER_DIR, picked from a list when there are
+                           several (--list only shows it), and removed once imported. Fetches
                            first if this clone lacks commits it builds on. Brings the exported
                            working tree too when this one has no changes of its own, unless
                            --no-worktree. Then offers to resume the Claude Code conversation.
@@ -68,7 +69,7 @@ const COMMAND_OPTIONS: Record<string, string[]> = {
   base: ['branch', 'empty', 'reset'],
   link: ['dir', 'force'],
   export: ['claude'],
-  import: ['no-worktree', 'no-resume', 'force'],
+  import: ['no-worktree', 'no-resume', 'force', 'list'],
   move: ['claude', 'no-worktree', 'force'],
   wait: ['timeout'],
 };
@@ -91,6 +92,7 @@ async function main(argv: string[]): Promise<number> {
       claude: { type: 'string' },
       'no-worktree': { type: 'boolean' },
       'no-resume': { type: 'boolean' },
+      list: { type: 'boolean' },
       version: { type: 'boolean', short: 'v' },
       help: { type: 'boolean', short: 'h' },
     },
@@ -192,8 +194,26 @@ async function main(argv: string[]): Promise<number> {
     }
     case 'import': {
       if (rest.length > 1) throw new UsageError('give at most one file to import');
-      const { importSession } = await import('../core/transfer.ts');
-      const r = await importSession(cwd, rest[0], { force: values.force ?? false, worktree: !values['no-worktree'] });
+      const { importSession, sessionExports } = await import('../core/transfer.ts');
+      const { transferDir } = await import('../core/transfer-dir.ts');
+      const { describeExports } = await import('./transfer-format.ts');
+      let file = rest[0];
+      const interactive = process.stdin.isTTY === true && process.stdout.isTTY === true;
+      if (file === undefined && transferDir() && (values.list || interactive)) {
+        const entries = await sessionExports(cwd);
+        if (values.list || entries.length > 1) {
+          console.log(entries.length ? `Exports of this repository in ${transferDir()}, newest first:\n${describeExports(entries)}` : `There are no exports of this repository in ${transferDir()}.`);
+        }
+        if (values.list) return 0;
+        if (entries.length > 1) {
+          const choice = await pick(entries.length);
+          if (choice === null) return 1;
+          file = entries[choice]!.file;
+        }
+      } else if (values.list) {
+        throw new UsageError('--list needs POSTIL_TRANSFER_DIR, the folder exports are synced through');
+      }
+      const r = await importSession(cwd, file, { force: values.force ?? false, worktree: !values['no-worktree'] });
       const { describeImport } = await import('./transfer-format.ts');
       console.log(describeImport(r));
       if (r.transcript?.resumable && !values['no-resume'] && process.stdin.isTTY && process.stdout.isTTY) {
@@ -235,6 +255,23 @@ async function main(argv: string[]): Promise<number> {
 /** --claude <id> picks the conversation, --claude none leaves it out; by default, the one that last listened. */
 function claudeOption(value: string | undefined): { claudeSession?: string | null } {
   return value === undefined ? {} : { claudeSession: value === 'none' ? null : value };
+}
+
+/** A choice from 1 to n, the first by default, or null when the user gives none. */
+async function pick(n: number): Promise<number | null> {
+  const { createInterface } = await import('node:readline/promises');
+  const rl = createInterface({ input: process.stdin, output: process.stdout });
+  try {
+    for (;;) {
+      const answer = (await rl.question(`Import which one? [1-${n}, Enter for 1, q to stop] `)).trim();
+      if (answer === '') return 0;
+      if (/^q(uit)?$/i.test(answer)) return null;
+      const i = Number(answer);
+      if (Number.isInteger(i) && i >= 1 && i <= n) return i - 1;
+    }
+  } finally {
+    rl.close();
+  }
 }
 
 async function confirm(question: string): Promise<boolean> {

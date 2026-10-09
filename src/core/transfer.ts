@@ -1,8 +1,7 @@
 import { existsSync } from 'node:fs';
 import { mkdir, mkdtemp, readdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
-import { createHash } from 'node:crypto';
 import { homedir, hostname, tmpdir } from 'node:os';
-import { basename, join, resolve, sep } from 'node:path';
+import { dirname, join, resolve, sep } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { Store } from '../db/store.ts';
 import { MIGRATIONS } from '../db/schema.ts';
@@ -10,6 +9,9 @@ import { GitError } from '../git/exec.ts';
 import { assertOid, PIN_ROOT, Repo } from '../git/repo.ts';
 import { NotRunningError, PostilClient } from './client.ts';
 import { normalizeRemote } from './history.ts';
+import {
+  exportName, listExports, pruneExports, removeExport, transferDir, writeExportInfo, type ExportEntry, type ExportSummary,
+} from './transfer-dir.ts';
 import { assertSession } from './postil.ts';
 import { VERSION } from './version.ts';
 
@@ -125,36 +127,32 @@ export interface ExportResult {
   file: string;
   manifest: Manifest;
   bytes: number;
+  summary: ExportSummary | null;
+  /** Older exports of this branch removed from the transfer folder. */
+  replaced: number;
 }
 
-/** A folder synced between computers: exports go there by default, and imports look there. */
-export function transferDir(): string | null {
-  const dir = process.env.POSTIL_TRANSFER_DIR?.trim();
-  return dir ? resolve(dir) : null;
+/** This repository's exports in the transfer folder, newest first. */
+export async function sessionExports(cwd: string): Promise<ExportEntry[]> {
+  return listExports(await repoIdentity(await Repo.open(cwd)));
 }
 
-/** Exports of one repository share a tag in their names, so an import finds its own among others'. */
-function repoTag(identity: string | null): string {
-  return createHash('sha256').update(identity ?? 'no identity').digest('hex').slice(0, 10);
-}
-
-const EXPORT_NAME = /-([0-9a-f]{10})-(\d{8}-\d{6})\.bundle$/;
-
-function exportName(repo: Repo, identity: string | null): string {
-  const stamp = new Date().toISOString().slice(0, 19).replace(/[-:]/g, '').replace('T', '-');
-  return `postil-${basename(repo.root).replace(/[^\w.-]/g, '_')}-${repoTag(identity)}-${stamp}.bundle`;
-}
-
-/** The newest export of this repository in the transfer folder, or null. */
-export async function latestExport(cwd: string): Promise<string | null> {
-  const dir = transferDir();
-  if (!dir) return null;
-  const tag = repoTag(await repoIdentity(await Repo.open(cwd)));
-  const mine = (await readdir(dir).catch(() => [] as string[]))
-    .map((name) => ({ name, m: EXPORT_NAME.exec(name) }))
-    .filter((e) => e.m?.[1] === tag)
-    .sort((x, y) => (x.m![2]! < y.m![2]! ? 1 : -1));
-  return mine[0] ? join(dir, mine[0].name) : null;
+/** Counts that tell one export from another in a list. Best effort: null for a database it cannot read. */
+function summarize(conn: DatabaseSync): ExportSummary | null {
+  try {
+    const n = (sql: string) => Number((conn.prepare(sql).get() as { n: number }).n);
+    const last = conn.prepare('SELECT id, status FROM review WHERE status != \'draft\' AND archived_at IS NULL ORDER BY id DESC LIMIT 1').get() as
+      { id: number; status: string } | undefined;
+    return {
+      open_threads: n(`SELECT COUNT(*) AS n FROM thread WHERE archived_at IS NULL AND status = 'open'
+                       AND EXISTS (SELECT 1 FROM comment WHERE thread_id = thread.id AND draft = 0)`),
+      waiting_reviews: n(`SELECT COUNT(*) AS n FROM review WHERE archived_at IS NULL AND status IN ('submitted', 'in_progress')`),
+      drafts: n('SELECT COUNT(*) AS n FROM comment WHERE draft = 1'),
+      last_review: last ? { id: Number(last.id), status: String(last.status) } : null,
+    };
+  } catch {
+    return null;
+  }
 }
 
 /** Bundle this clone's postil session. Safe beside a running server: nothing here changes. */
@@ -165,7 +163,7 @@ export async function exportSession(cwd: string, opts: ExportOptions = {}): Prom
   const identity = await repoIdentity(repo);
   const dir = transferDir();
   if (opts.file === undefined && dir) await mkdir(dir, { recursive: true });
-  const file = resolve(cwd, opts.file ?? join(dir ?? homedir(), exportName(repo, identity)));
+  const file = resolve(cwd, opts.file ?? join(dir ?? homedir(), exportName(repo.root, identity)));
   if (existsSync(file)) throw new TransferError(`${file} already exists`);
 
   // VACUUM INTO writes a consistent copy even while the server is writing.
@@ -173,6 +171,7 @@ export async function exportSession(cwd: string, opts: ExportOptions = {}): Prom
   let db: Buffer;
   let schema: number;
   let listeners: string[];
+  let summary: ExportSummary | null = null;
   try {
     const copy = join(tmp, 'postil.db');
     const conn = new DatabaseSync(dbPath);
@@ -185,6 +184,12 @@ export async function exportSession(cwd: string, opts: ExportOptions = {}): Prom
       conn.prepare('VACUUM INTO ?').run(copy);
     } finally {
       conn.close();
+    }
+    const snapshot = new DatabaseSync(copy, { readOnly: true });
+    try {
+      summary = summarize(snapshot);
+    } finally {
+      snapshot.close();
     }
     db = await readFile(copy);
   } finally {
@@ -251,7 +256,13 @@ export async function exportSession(cwd: string, opts: ExportOptions = {}): Prom
   } finally {
     await repo.run(['update-ref', '-d', EXPORT_REF]);
   }
-  return { file, manifest, bytes: (await stat(file)).size };
+  // In the transfer folder, describe it for the list, and let it replace older exports of this branch.
+  let replaced = 0;
+  if (dir && dirname(file) === dir) {
+    await writeExportInfo(file, { exported_at: manifest.exported_at, host: manifest.host, branch, head, claude_session: manifest.claude_session, summary });
+    replaced = await pruneExports(identity, branch, file);
+  }
+  return { file, manifest, bytes: (await stat(file)).size, summary, replaced };
 }
 
 // ---------------------------------------------------------------------------- import
@@ -357,7 +368,7 @@ export async function importSession(cwd: string, file: string | undefined, opts:
   if (file === undefined) {
     const dir = transferDir();
     if (!dir) throw new TransferError('give the file `postil export` wrote, or set POSTIL_TRANSFER_DIR to a folder synced between your computers');
-    const latest = await latestExport(cwd);
+    const latest = (await sessionExports(cwd))[0]?.file;
     if (!latest) throw new TransferError(`there is no export of this repository in ${dir} (yet: it may still be syncing)`);
     path = latest;
   } else {
@@ -489,7 +500,9 @@ export async function importSession(cwd: string, file: string | undefined, opts:
     }
 
     let consumed = false;
-    if (picked) consumed = await rm(path).then(() => true, () => false);
+    if (picked || (transferDir() !== null && dirname(path) === transferDir())) {
+      consumed = await removeExport(path).then(() => true, () => false);
+    }
     return { manifest, file: path, consumed, root: repo.root, worktree, worktreeNote, fetched, backup, transcript, warnings };
   } finally {
     await repo.run(['update-ref', '-d', IMPORT_REF]).catch(() => undefined);

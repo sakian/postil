@@ -122,8 +122,11 @@ postil export                  # on this computer, or /postil:review export in t
 postil import                  # in the clone on the other computer, once the file has synced
 ```
 
-The import takes the newest export of that repository from the folder, removes it once imported,
-and offers to resume the Claude Code conversation, which picks the review up with it. Without the
+When the folder holds more than one export of that repository, the import lists them, with each
+one's branch, computer, age and open conversations, and asks which to take (`postil import --list`
+only shows the list). It offers to resume the Claude Code conversation, which picks the review up
+with it. The folder tidies itself: an export is removed once imported, when a newer export of the
+same branch replaces it, and when you finish the session on that branch. Without the
 folder, `postil export` writes the file to your home directory, and you copy it over and run
 `postil import <file>`.
 

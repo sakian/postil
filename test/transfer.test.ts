@@ -6,7 +6,8 @@ import { dirname, join } from 'node:path';
 import { afterEach, beforeEach, describe, it } from 'node:test';
 import { Postil } from '../src/core/postil.ts';
 import { importScript, moveSession, parseTarget, remotePath } from '../src/cli/move.ts';
-import { claudeProjectDir, exportSession, importSession, TransferError } from '../src/core/transfer.ts';
+import { describeExports } from '../src/cli/transfer-format.ts';
+import { claudeProjectDir, exportSession, importSession, sessionExports, TransferError } from '../src/core/transfer.ts';
 import { makeFixture, numbered, type Fixture } from './helpers.ts';
 
 /** A file's text with line endings as git stores them, since Windows checkouts may write CRLF. */
@@ -161,10 +162,18 @@ describe('moving a session to another clone', () => {
     process.env.POSTIL_TRANSFER_DIR = dir;
     await assert.rejects(importSession(b.dir, undefined), (e) => e instanceof TransferError && /no export of this repository/.test(e.message));
 
-    const older = await exportSession(a.dir);
-    assert.equal(dirname(older.file), dir);
+    const first = await exportSession(a.dir);
+    assert.equal(dirname(first.file), dir);
+    assert.deepEqual(first.summary, { open_threads: 1, waiting_reviews: 1, drafts: 0, last_review: { id: 1, status: 'submitted' } });
     await new Promise((r) => setTimeout(r, 1100)); // names carry the time to the second
+    a.git('checkout', '-q', '-b', 'topic');
+    const topic = await exportSession(a.dir);
+    assert.equal(topic.replaced, 0, 'another branch keeps its export');
+    a.git('checkout', '-q', 'main');
+    await new Promise((r) => setTimeout(r, 1100));
     const newer = await exportSession(a.dir);
+    assert.equal(newer.replaced, 1, "replaces the older export of this branch");
+    assert.equal(existsSync(first.file), false);
     const other = makeFixture();
     try {
       other.write('x', '1\n');
@@ -175,12 +184,29 @@ describe('moving a session to another clone', () => {
       other.cleanup();
     }
 
+    const list = await sessionExports(b.dir);
+    assert.deepEqual(list.map((e) => [e.file, e.info?.branch]), [[newer.file, 'main'], [topic.file, 'topic']]);
+    assert.match(describeExports(list, Date.parse(list[0]!.info!.exported_at) + 5 * 60_000), /^ {2}1\. main · from .+, 5 minutes ago · 1 open conversation, 1 review waiting for Claude$/m);
+
     const r = await importSession(b.dir, undefined);
     assert.equal(r.file, newer.file);
     assert.equal(r.consumed, true);
-    assert.equal(existsSync(newer.file), false, 'removed once imported');
-    assert.equal(existsSync(older.file), true);
-    assert.equal(readdirSync(dir).length, 2, "the other repository's export is left alone");
+    assert.equal(existsSync(newer.file) || existsSync(newer.file.replace(/\.bundle$/, '.json')), false, 'removed once imported');
+    assert.equal(readdirSync(dir).length, 4, "the topic branch's and the other repository's exports are left alone");
+  });
+
+  it('clears exports of a branch once its session is finished', async () => {
+    const dir = join(scratch, 'synced');
+    process.env.POSTIL_TRANSFER_DIR = dir;
+    a.write('f.txt', numbered(10, { 2: 'two' }));
+    const postil = await Postil.open(a.dir);
+    try {
+      const exported = await exportSession(a.dir);
+      await postil.finishSession();
+      assert.equal(existsSync(exported.file), false);
+    } finally {
+      postil.close();
+    }
   });
 
   it('moves over SSH in one command', { skip: process.platform === 'win32' && 'needs a POSIX shell' }, async () => {
