@@ -139,3 +139,25 @@ export function blockSelected(b: Block, sel: { start: number; end: number } | nu
 export function isMarkdown(path: string): boolean {
   return /\.(md|markdown|mdown|mkd)$/i.test(path);
 }
+
+/**
+ * The repository path an image or link in the Markdown file at `from` points to, or null when it
+ * points elsewhere: another site, a data URI, or above the repository's root. A leading `/` is the
+ * repository's root, as GitHub reads it.
+ */
+export function repoPath(src: string, from: string): string | null {
+  if (/^[a-z][a-z\d+.-]*:/i.test(src) || src.startsWith('//')) return null;
+  let path: string;
+  try {
+    path = decodeURIComponent(src.replace(/[?#].*$/s, ''));
+  } catch {
+    return null;
+  }
+  const parts = path.startsWith('/') ? [] : from.split('/').slice(0, -1);
+  for (const seg of path.split('/')) {
+    if (seg === '' || seg === '.') continue;
+    if (seg !== '..') parts.push(seg);
+    else if (parts.pop() === undefined) return null;
+  }
+  return parts.length > 0 ? parts.join('/') : null;
+}

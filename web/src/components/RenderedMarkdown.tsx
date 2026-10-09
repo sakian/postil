@@ -1,9 +1,10 @@
-import { Children, createContext, isValidElement, useContext, useEffect, useMemo, useRef, type MouseEvent, type ReactElement, type ReactNode } from 'react';
+import { Children, createContext, isValidElement, useContext, useEffect, useMemo, useRef, useState, type MouseEvent, type ReactElement, type ReactNode } from 'react';
 import ReactMarkdown, { type Components } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import type { FileChange, FileDiff, ThreadView } from '../../../src/core/api-types.ts';
 import { currentLines, sidePath } from '../format.ts';
-import { blockChanges, blockHolds, blockOf, blockSelected, newSideChanges, rehypeBlocks, type Block, type NewSideChanges } from '../lib/mdblocks.ts';
+import { api } from '../api.ts';
+import { blockChanges, blockHolds, blockOf, blockSelected, newSideChanges, rehypeBlocks, repoPath, type Block, type NewSideChanges } from '../lib/mdblocks.ts';
 import { useStore, type Target } from '../store.ts';
 import { Icon } from './icons.tsx';
 import { Code } from './Markdown.tsx';
@@ -40,6 +41,7 @@ export function RenderedMarkdown({ file, diff, threads }: Props) {
   const linesState = useStore((s) => (blob ? s.lines[blob] : undefined));
   const selection = useStore((s) => (s.selection?.path === file.path && s.selection.side === 'new' ? s.selection : null));
   const composer = useStore((s) => (s.composer?.path === file.path && s.composer.side === 'new' ? s.composer : null));
+  const tree = useStore((s) => s.resolved?.to.tree ?? null);
   const { loadLines, select, openComposer } = useStore.getState();
 
   useEffect(() => {
@@ -88,7 +90,13 @@ export function RenderedMarkdown({ file, diff, threads }: Props) {
   /** The source of the selected lines, to seed a suggestion. */
   const seed = (t: Target): string | null => (lines && t.end <= lines.length ? lines.slice(t.start - 1, t.end).join('\n') : null);
 
-  const ctx: BlockContext = { changes, onNew, selection, composer, onDown, onEnter, seed };
+  /** Images in the repository load from the snapshot under review; the page's policy blocks the rest. */
+  const image = (src: string): string | null => {
+    const path = tree && repoPath(src, file.path);
+    return path ? api.treeRawUrl(tree, path) : null;
+  };
+
+  const ctx: BlockContext = { changes, onNew, selection, composer, onDown, onEnter, seed, image };
   // Rendered once per content: selecting and commenting only re-render the blocks, through the context.
   const doc = useMemo(
     () => source === null ? null : <ReactMarkdown remarkPlugins={REMARK} rehypePlugins={REHYPE} components={COMPONENTS}>{source}</ReactMarkdown>,
@@ -121,6 +129,8 @@ interface BlockContext {
   onDown(e: MouseEvent, b: Block): void;
   onEnter(b: Block): void;
   seed(t: Target): string | null;
+  /** Where an image's source loads from, or null to show it as a placeholder. */
+  image(src: string): string | null;
 }
 
 const Ctx = createContext<BlockContext | null>(null);
@@ -172,8 +182,15 @@ const COMPONENTS: Components = {
       ? <a href={href} target="_blank" rel="noopener noreferrer">{children}</a>
       : <span className="md-link" title={href}>{children}</span>;
   },
-  // The page's content security policy blocks images from anywhere but this server.
   img({ src, alt }) {
-    return <span className="md-image" title={typeof src === 'string' ? src : undefined}><Icon name="image" size={12} /> {alt || 'image'}</span>;
+    return <Image src={typeof src === 'string' ? src : ''} alt={alt ?? ''} />;
   },
 };
+
+/** An image from the repository, or a placeholder for one that is elsewhere or will not load. */
+function Image({ src, alt }: { src: string; alt: string }) {
+  const url = useContext(Ctx)!.image(src);
+  const [failed, setFailed] = useState<string | null>(null);
+  if (url && failed !== url) return <img src={url} alt={alt} onError={() => setFailed(url)} />;
+  return <span className="md-image" title={src || undefined}><Icon name="image" size={12} /> {alt || 'image'}</span>;
+}

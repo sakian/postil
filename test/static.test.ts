@@ -107,6 +107,14 @@ describe('raw blob previews', () => {
       assert.deepEqual(Buffer.from(await res.arrayBuffer()), png);
       const svg = await fetch(`${server.info.url}/api/blobs/${oid}/raw?path=x.svg&token=${server.info.token}`);
       assert.match(svg.headers.get('content-security-policy') ?? '', /sandbox/, 'SVGs are sandboxed too');
+      const tree = fx.git('rev-parse', 'HEAD^{tree}').trim();
+      const byPath = await fetch(`${server.info.url}/api/trees/${tree}/raw?path=logo.png&token=${server.info.token}`);
+      assert.equal(byPath.status, 200, 'a file can be fetched by its path in a snapshot');
+      assert.equal(byPath.headers.get('content-type'), 'image/png');
+      assert.match(byPath.headers.get('content-security-policy') ?? '', /^sandbox/);
+      assert.deepEqual(Buffer.from(await byPath.arrayBuffer()), png);
+      const missing = await fetch(`${server.info.url}/api/trees/${tree}/raw?path=nope.png&token=${server.info.token}`);
+      assert.equal(missing.status, 404);
     } finally {
       await server.close();
       fx.cleanup();

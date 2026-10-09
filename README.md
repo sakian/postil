@@ -158,8 +158,9 @@ Other commands: `postil start`, `stop`, `status`, `open`, `url`, `base`, `archiv
 - Suggestions in comments apply with one click, or Claude can apply them.
 - Markdown files can be reviewed rendered (**Rendered** on the file, or `m`). Changed blocks are
   marked, and a comment on a paragraph, list item, table or code block is a comment on its source
-  lines, so it shows in the diff too and Claude sees the source. Images and links into the
-  repository are shown as placeholders.
+  lines, so it shows in the diff too and Claude sees the source. Images in the repository are
+  shown as they are in the reviewed state; images from the web and links into the repository are
+  shown as placeholders.
 - Review all changes, uncommitted changes, changes since a review or since the last finished
   session (even one finished in another clone), or any range of commits. Files updated since your
   last review are marked.

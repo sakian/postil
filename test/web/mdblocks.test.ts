@@ -6,7 +6,7 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import type { FileDiff } from '../../src/core/api-types.ts';
 import { Postil } from '../../src/core/postil.ts';
-import { blockChanges, blockHolds, blockSelected, isMarkdown, newSideChanges, rehypeBlocks, type Block } from '../../web/src/lib/mdblocks.ts';
+import { blockChanges, blockHolds, blockSelected, isMarkdown, newSideChanges, rehypeBlocks, repoPath, type Block } from '../../web/src/lib/mdblocks.ts';
 import { makeFixture, type Fixture } from '../helpers.ts';
 
 /** The blocks react-markdown renders for `source`, read back from their wrappers' attributes. */
@@ -110,5 +110,24 @@ describe('what a diff changed in rendered blocks', () => {
       { kind: 'del', old_no: 3, new_no: null, text: 'b' },
     ] }]);
     assert.deepEqual(blockChanges(blocks('a\n')[0]!, c), { changed: false, removedBefore: 0, removedAfter: 2 });
+  });
+});
+
+describe('repoPath', () => {
+  it("resolves a relative source against the Markdown file's directory", () => {
+    assert.equal(repoPath('img/a.png', 'docs/README.md'), 'docs/img/a.png');
+    assert.equal(repoPath('./a.png', 'docs/README.md'), 'docs/a.png');
+    assert.equal(repoPath('../shots/a.png', 'docs/guide/x.md'), 'docs/shots/a.png');
+    assert.equal(repoPath('a.png', 'README.md'), 'a.png');
+  });
+  it('reads a leading slash as the repository root, and drops queries, fragments and escapes', () => {
+    assert.equal(repoPath('/assets/a.png', 'docs/README.md'), 'assets/a.png');
+    assert.equal(repoPath('a.png?raw=true#top', 'README.md'), 'a.png');
+    assert.equal(repoPath('my%20shot.png', 'README.md'), 'my shot.png');
+  });
+  it('refuses sources outside the repository', () => {
+    for (const src of ['https://example.com/a.png', '//cdn.example.com/a.png', 'data:image/png;base64,AA', '../a.png', '', '%E0%A4%A']) {
+      assert.equal(repoPath(src, 'README.md'), null, src);
+    }
   });
 });
