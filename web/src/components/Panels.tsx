@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { api } from '../api.ts';
-import type { ThreadView } from '../../../src/core/api-types.ts';
+import type { ReviewView, ThreadView } from '../../../src/core/api-types.ts';
 import { isOutdated, isYourTurn, lineLabel, placement, relativeTime, snippet, threadFile } from '../format.ts';
 import { askToNotify, useStore } from '../store.ts';
 import { FinishControls, useFinishable } from './Finish.tsx';
@@ -24,6 +24,7 @@ function ThreadsPanel() {
   const threads = useStore((s) => s.threads);
   const resolved = useStore((s) => s.resolved);
   const completed = useStore((s) => s.completedReview);
+  const latest = useStore((s) => s.reviews.filter((r) => r.status === 'addressed').reduce<ReviewView | null>((a, r) => (a && a.id > r.id ? a : r), null));
   // Claude's replies are what the user comes here for, once there are any.
   const [filter, setFilter] = useState<Filter>(() => (threads.some(isYourTurn) ? 'yours' : 'open'));
   useEffect(() => {
@@ -75,7 +76,16 @@ function ThreadsPanel() {
         </div>
       )}
       <div className="panel-list">
-        {shown.length === 0 && <div className="empty muted">No conversations here.</div>}
+        {shown.length === 0 && (filter === 'yours' && latest?.summary ? (
+          // Nothing for the user to answer, often when the review was only an overall comment: show what Claude said instead.
+          <div className="panel-summary">
+            <div className="muted">Nothing waiting on you. Claude's summary of review #{latest.id}:</div>
+            <div className="history-summary">
+              <span className="avatar avatar-claude" aria-hidden>C</span>
+              <Markdown text={latest.summary} suggestionBase={null} />
+            </div>
+          </div>
+        ) : <div className="empty muted">No conversations here.</div>)}
         {shown.map((t) => {
           const where = placement(t, resolved ? threadFile(t, resolved.files) : undefined);
           return (
