@@ -427,6 +427,8 @@ li + li { margin-top: 2px; }
 .history-item { border: 1px solid var(--border); border-radius: var(--radius); padding: 8px 10px; margin-bottom: 8px; }
 .history-head { display: flex; gap: 8px; align-items: center; font-size: 13px; }
 .history-summary { display: flex; gap: 8px; align-items: flex-start; margin-top: 6px; padding-top: 6px; border-top: 1px dashed var(--border-muted); }
+.panel-summary { padding: 8px 0; }
+.panel-summary .history-summary { border-top: none; }
 
 /* ------------------------------------------------------------------ toasts & misc */
 .toasts { position: fixed; left: 50%; transform: translateX(-50%); bottom: 16px; display: flex; flex-direction: column; gap: 8px; z-index: 50; }

@@ -253,6 +253,20 @@ describe('the reviewing workflow', { timeout: 180_000 }, () => {
     await page.keyboard.press('Escape');
   });
 
+  it("shows Claude's summary when nothing is waiting on you", async () => {
+    // A review of only an overall comment leaves no conversation to answer.
+    const review = await api<{ id: number }>('POST', '/api/reviews/submit', { body: 'Is the numbering still needed?' });
+    await api('GET', `/api/agent/reviews/${review.id}`);
+    await api('POST', `/api/agent/reviews/${review.id}/complete`, { summary: 'Yes: the parser counts on it.' });
+    await page.locator('.banner-done', { hasText: `Claude finished review #${review.id}` }).getByRole('button', { name: 'Open conversations' }).click();
+    const summary = page.locator('.side-panel .panel-summary');
+    await summary.waitFor();
+    const text = await summary.innerText();
+    assert.match(text, new RegExp(`review #${review.id}`));
+    assert.match(text, /the parser counts on it/);
+    await page.keyboard.press('Escape');
+  });
+
   it('finishes the session once everything is reviewed and resolved', async () => {
     // Claude answers any pending comments, the user resolves everything and views every file.
     const { draft } = await api<{ draft: { comment_count: number } | null }>('GET', '/api/reviews/draft');

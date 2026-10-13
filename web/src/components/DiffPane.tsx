@@ -20,6 +20,7 @@ export { fileAnchor } from '../lib/pin.ts';
 const STATUS_LETTER: Record<FileChange['status'], string> = { added: 'A', modified: 'M', deleted: 'D', renamed: 'R', type_changed: 'T' };
 
 const IMAGE = /\.(png|jpe?g|gif|webp|avif|bmp|ico|svg)$/i;
+const SVG = /\.svg$/i;
 
 function ImageSide({ label, oid, path }: { label: string; oid: string | null; path: string | null }) {
   const [size, setSize] = useState<string | null>(null);
@@ -102,20 +103,6 @@ function FileView({ file, threads }: { file: FileChange; threads: ThreadView[] }
   }, []);
   const nearViewport = near || holdsWork;
 
-  // Huge diffs wait for an explicit request: rendering thousands of rows unasked
-  // would stall the page for a file the user may not need to read line by line.
-  const changedLines = (file.additions ?? 0) + (file.deletions ?? 0);
-  const [largeRequested, setLargeRequested] = useState(false);
-  const deferred = changedLines > LARGE_DIFF_LINES && !largeRequested;
-  // Same content both sides (a pure rename or mode change): nothing to fetch.
-  const sameContent = file.old_blob !== null && file.old_blob === file.new_blob;
-  const loadable = file.kind !== 'submodule' && !deferred && !sameContent && !(file.kind === 'binary' && IMAGE.test(file.path));
-  useEffect(() => {
-    if (!(nearViewport && !folded && loadable)) return;
-    void loadDiff(file);
-    return () => useStore.getState().cancelDiff(file);
-  }, [nearViewport, folded, loadable, file, loadDiff]);
-
   const groups = useMemo(() => {
     const inline: ThreadView[] = [];
     const fileLevel: ThreadView[] = [];
@@ -128,6 +115,29 @@ function FileView({ file, threads }: { file: FileChange; threads: ThreadView[] }
     }
     return { inline, fileLevel, gone };
   }, [threads, file]);
+  // Binary files and SVGs (an image kept as text) are not read line by line, so like huge diffs they
+  // wait behind a note until asked for. An SVG with comments on its lines opens on its source.
+  const svg = SVG.test(file.path);
+  const opaque = file.kind === 'binary' || svg;
+  const image = IMAGE.test(file.path);
+  const [reveal, setReveal] = useState<'image' | 'source' | null>(null);
+  const shown = reveal ?? (svg && groups.inline.length > 0 ? 'source' : null);
+  const showingText = !opaque || shown === 'source';
+
+  // Huge diffs wait for an explicit request: rendering thousands of rows unasked
+  // would stall the page for a file the user may not need to read line by line.
+  const changedLines = (file.additions ?? 0) + (file.deletions ?? 0);
+  const [largeRequested, setLargeRequested] = useState(false);
+  const deferred = changedLines > LARGE_DIFF_LINES && !largeRequested;
+  // Same content both sides (a pure rename or mode change): nothing to fetch.
+  const sameContent = file.old_blob !== null && file.old_blob === file.new_blob;
+  const loadable = file.kind !== 'submodule' && !deferred && !sameContent && showingText;
+  useEffect(() => {
+    if (!(nearViewport && !folded && loadable)) return;
+    void loadDiff(file);
+    return () => useStore.getState().cancelDiff(file);
+  }, [nearViewport, folded, loadable, file, loadDiff]);
+
   const updated = useStore((s) => s.scope.kind !== 'since_review' && s.updatedPaths.has(file.path));
   const sinceReviewId = useStore((s) => s.resolved?.since_review?.review_id);
 
@@ -150,19 +160,27 @@ function FileView({ file, threads }: { file: FileChange; threads: ThreadView[] }
   }, [ready, sections, file]);
 
   let body: ReactNode = null;
-  if (file.kind === 'binary' && IMAGE.test(file.path)) {
+  if (sameContent) {
+    body = (
+      <div className="file-note muted">
+        {file.status === 'renamed' ? 'File renamed without changes.' : `File mode changed from ${file.old_mode} to ${file.new_mode}.`}
+      </div>
+    );
+  } else if (opaque && shown === 'image') {
     body = <ImageDiff file={file} />;
+  } else if (!showingText) {
+    body = (
+      <div className="file-note muted">
+        {svg ? 'SVG image not shown.' : image ? 'Image not shown.' : 'Binary file not shown.'}{' '}
+        {image && <button className="link-btn" onClick={() => setReveal('image')}>Show image</button>}
+        {svg && <>{' · '}<button className="link-btn" onClick={() => setReveal('source')}>Show source</button></>}
+      </div>
+    );
   } else if (deferred) {
     body = (
       <div className="file-note muted">
         Large diff: {changedLines.toLocaleString()} changed lines.{' '}
         <button className="link-btn" onClick={() => setLargeRequested(true)}>Load diff</button>
-      </div>
-    );
-  } else if (sameContent) {
-    body = (
-      <div className="file-note muted">
-        {file.status === 'renamed' ? 'File renamed without changes.' : `File mode changed from ${file.old_mode} to ${file.new_mode}.`}
       </div>
     );
   } else if (file.kind === 'submodule') {
@@ -222,7 +240,13 @@ function FileView({ file, threads }: { file: FileChange; threads: ThreadView[] }
             <Icon name={rendered ? 'code' : 'eye'} size={14} /> {rendered ? 'Source' : 'Rendered'}
           </button>
         )}
-        {ready && ready.new_lines !== null && ready.hunks.length > 0 && !folded && !rendered && (
+        {svg && shown !== null && !folded && (
+          <button className="btn btn-small" data-action="svg-view" onClick={() => setReveal(shown === 'image' ? 'source' : 'image')}
+            title={shown === 'image' ? 'Show the diff of the source' : 'Show the image before and after'}>
+            <Icon name={shown === 'image' ? 'code' : 'eye'} size={14} /> {shown === 'image' ? 'Source' : 'Image'}
+          </button>
+        )}
+        {ready && ready.new_lines !== null && ready.hunks.length > 0 && !folded && !rendered && showingText && (
           <>
             <button className="btn btn-small" data-action="expand-all" onClick={() => void expandFile(file, ready.new_lines!)} title="Show the whole file (e)">
               <Icon name="unfold" size={14} /> Expand all

@@ -419,6 +419,37 @@ describe('postil UI', { timeout: 120_000 }, () => {
     await big.locator('table.diff').waitFor();
   });
 
+  it('hides binary files and SVGs until asked', async () => {
+    const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=', 'base64');
+    fx.write('assets/dot.png', png);
+    fx.write('assets/blob.bin', Buffer.from([0, 1, 2, 3, 0, 255]));
+    fx.write('assets/logo.svg', '<svg xmlns="http://www.w3.org/2000/svg" width="8" height="8">\n  <rect width="8" height="8" fill="red"/>\n</svg>\n');
+    await page.locator('.banner', { hasText: 'Files changed on disk' }).waitFor();
+    await page.locator('.banner').getByRole('button', { name: 'Refresh' }).click();
+
+    const bin = file('assets/blob.bin');
+    await bin.scrollIntoViewIfNeeded();
+    await bin.getByText('Binary file not shown.').waitFor();
+    assert.equal(await bin.getByRole('button').filter({ hasText: /^Show/ }).count(), 0, 'nothing to show for an opaque binary');
+
+    const dot = file('assets/dot.png');
+    await dot.scrollIntoViewIfNeeded();
+    await dot.getByText('Image not shown.').waitFor();
+    assert.equal(await dot.locator('img').count(), 0);
+    await dot.getByRole('button', { name: 'Show image' }).click();
+    await dot.locator('.image-diff img').waitFor();
+
+    const svg = file('assets/logo.svg');
+    await svg.scrollIntoViewIfNeeded();
+    await svg.getByText('SVG image not shown.').waitFor();
+    assert.equal(await svg.locator('table.diff').count(), 0);
+    await svg.getByRole('button', { name: 'Show source' }).click();
+    await svg.locator('table.diff').waitFor();
+    await svg.locator('[data-action="svg-view"]').click();
+    await svg.locator('.image-diff img').waitFor();
+    assert.equal(await svg.locator('table.diff').count(), 0, 'the image replaces the source');
+  });
+
   it('answers the keyboard', async () => {
     await page.locator('body').click({ position: { x: 5, y: 5 } });
     await page.evaluate(() => document.querySelector('main.main')!.scrollTo(0, 0));
