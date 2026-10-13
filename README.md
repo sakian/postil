@@ -140,7 +140,9 @@ The import brings the working tree along when the clone has no changes of its ow
 its branch to the exported commit if it is behind; the changes show as unstaged. Otherwise, or with
 `--no-worktree`, it leaves the working tree alone and says why. It refuses while a review server is
 running in the clone (`postil stop`), or while the clone has a session of its own under way;
-`--force` replaces that one, keeping its database as `postil.db.before-import`.
+`--force` replaces that one, keeping its database as `postil.db.before-import`. A session exported
+from the clone and not changed there since does not count, so switching back to a computer needs
+no `--force`.
 
 The browser tab does not move, but resuming with `/postil:review` opens a new one on the same scope
 and view. The session stays on the first computer as well, but nothing done there afterwards goes
