@@ -125,6 +125,42 @@ describe('moving a session to another clone', () => {
     assert.equal(text(join(b.dir, 'f.txt')), numbered(10, { 5: 'mine' }), 'its own changes are left alone');
   });
 
+  it('takes a session back to the clone it was exported from without forcing', async () => {
+    await startReview();
+    await exportSession(a.dir, { file: join(scratch, 'there.bundle') });
+    await importSession(b.dir, join(scratch, 'there.bundle'));
+    const there = await Postil.open(b.dir);
+    try {
+      there.replyAsUser(there.threads()[0]!.id, 'from b');
+    } finally {
+      there.close();
+    }
+    await exportSession(b.dir, { file: join(scratch, 'back.bundle') });
+
+    const r = await importSession(a.dir, join(scratch, 'back.bundle'), { worktree: false });
+    assert.ok(r.backup && existsSync(r.backup), 'the old database is still kept');
+    const postil = await Postil.open(a.dir);
+    try {
+      assert.deepEqual(postil.threads()[0]?.comments.map((c) => c.body), ['why?', 'from b']);
+    } finally {
+      postil.close();
+    }
+  });
+
+  it('keeps a session changed here since it was exported unless forced', async () => {
+    await startReview();
+    await exportSession(a.dir, { file: join(scratch, 'there.bundle') });
+    await importSession(b.dir, join(scratch, 'there.bundle'));
+    await exportSession(b.dir, { file: join(scratch, 'back.bundle') });
+    const here = await Postil.open(a.dir);
+    try {
+      here.replyAsUser(here.threads()[0]!.id, 'after exporting');
+    } finally {
+      here.close();
+    }
+    await assert.rejects(importSession(a.dir, join(scratch, 'back.bundle'), { worktree: false }), (e) => e instanceof TransferError && /under way/.test(e.message));
+  });
+
   it('refuses a different repository unless forced', async () => {
     await startReview();
     const file = join(scratch, 'session.bundle');

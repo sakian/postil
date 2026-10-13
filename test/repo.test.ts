@@ -250,6 +250,20 @@ describe('Repo diffs', () => {
     assert.equal(await repo.entryAt(tree, 'weird/nope.ts'), null);
   });
 
+  it('looks up many entries at once, as entryAt would one by one', async () => {
+    const weird = WINDOWS ? 'many/[x].ts' : 'many/*[x].ts';
+    fx.write(weird, 'glob-looking name\n');
+    fx.write('many/a.ts', 'a\n');
+    fx.write('many/with space.ts', 'b\n');
+    const tree = await repo.worktreeTree();
+    const paths = [weird, 'many/a.ts', 'many/with space.ts', 'many/nope.ts', 'many'];
+    const fresh = await Repo.open(fx.dir);
+    await fresh.prefetchEntries(tree, paths);
+    for (const p of paths) assert.deepEqual(await fresh.entryAt(tree, p), await (await Repo.open(fx.dir)).entryAt(tree, p), p);
+    assert.equal(await fresh.entryAt(tree, 'many/nope.ts'), null);
+    assert.equal((await fresh.entryAt(tree, 'many'))?.type, 'tree');
+  });
+
   it('refuses revisions that git would parse as options', async () => {
     await assert.rejects(repo.resolveCommit('--output=/tmp/x'), /invalid revision/);
     await assert.rejects(repo.resolveCommit('HEAD extra'), /invalid revision/);
