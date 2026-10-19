@@ -168,16 +168,6 @@ function ReviewPanel() {
               ? <>No pending comments. Comment on the code, or {overallLink('add an overall comment')}.</>
               : `${pendingCount} pending comment${pendingCount === 1 ? '' : 's'}. Claude sees nothing until you submit.`}
           </p>
-          {pendingThreads.length > 0 && (
-            <ul className="pending-list">
-              {pendingThreads.map((t) => (
-                <li key={t.id}>
-                  <button className="link-btn" onClick={() => focus(t.id)}>{t.path}:{lineLabel(t)}</button>
-                  <span className="muted"> {snippet(t.comments.find((c) => c.draft)?.body ?? '', 80)}</span>
-                </li>
-              ))}
-            </ul>
-          )}
           {overall ? (
             <>
               <textarea value={body} onChange={(e) => onBody(e.target.value)} rows={4} autoFocus={writingOverall}
@@ -195,6 +185,17 @@ function ReviewPanel() {
                 {busy ? 'Submitting…' : 'Submit review'}
               </button>
             </>
+          )}
+          {/* After the button, so a long review doesn't push it out of reach. */}
+          {pendingThreads.length > 0 && (
+            <ul className="pending-list">
+              {pendingThreads.map((t) => (
+                <li key={t.id}>
+                  <button className="link-btn" onClick={() => focus(t.id)}>{t.path}:{lineLabel(t)}</button>
+                  <span className="muted"> {snippet(t.comments.find((c) => c.draft)?.body ?? '', 80)}</span>
+                </li>
+              ))}
+            </ul>
           )}
         </section>
       )}
