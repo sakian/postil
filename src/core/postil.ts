@@ -429,6 +429,11 @@ export class Postil {
     const rows = this.store.listThreads(filter);
     const views = this.threadViews(rows, { includeDrafts: true });
     const byId = new Map(rows.map((r) => [r.id, r]));
+    // One git call per side for every thread's file, not one per thread.
+    await Promise.all([
+      this.repo.prefetchEntries(target.to_tree, rows.filter((r) => r.side === 'new').map((r) => r.path)),
+      this.repo.prefetchEntries(target.from_tree, rows.filter((r) => r.side === 'old').map((r) => r.path)),
+    ]);
     return Promise.all(views.map(async (v) => ({ ...v, anchor: await this.anchorFor(byId.get(v.id)!, target) })));
   }
 

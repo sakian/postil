@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { mkdir, mkdtemp, readdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { homedir, hostname, tmpdir } from 'node:os';
@@ -27,6 +28,10 @@ const FORMAT = 1;
 const EXPORT_REF = 'refs/postil-export/session';
 const IMPORT_REF = 'refs/postil-import/session';
 const BACKUP_SUFFIX = '.before-import';
+/** The setting holding a fingerprint of the session as it was exported from this clone. */
+const EXPORTED_SETTING = 'exported_fingerprint';
+/** What a session is made of, as opposed to bookkeeping such as listeners, snapshots and UI state. */
+const SESSION_TABLES = ['review', 'thread', 'comment', 'file_mark', 'section_mark'];
 
 export interface Manifest {
   format: number;
@@ -155,7 +160,20 @@ function summarize(conn: DatabaseSync): ExportSummary | null {
   }
 }
 
-/** Bundle this clone's postil session. Safe beside a running server: nothing here changes. */
+/** A hash of the session's content, which any comment, reply, review or mark changes. */
+function fingerprint(conn: DatabaseSync): string {
+  const hash = createHash('sha256');
+  for (const table of SESSION_TABLES) {
+    hash.update(`${table}\0`);
+    for (const row of conn.prepare(`SELECT * FROM ${table} ORDER BY rowid`).all()) hash.update(`${JSON.stringify(row)}\0`);
+  }
+  return hash.digest('hex');
+}
+
+/**
+ * Bundle this clone's postil session. Safe beside a running server: the only write is a note of
+ * what was exported, so importing it back later knows nothing here would be lost.
+ */
 export async function exportSession(cwd: string, opts: ExportOptions = {}): Promise<ExportResult> {
   const repo = await Repo.open(cwd);
   const dbPath = join(repo.stateDir, 'postil.db');
@@ -181,6 +199,8 @@ export async function exportSession(cwd: string, opts: ExportOptions = {}): Prom
       listeners = schema >= 2
         ? (conn.prepare('SELECT session_id FROM listener ORDER BY last_seen DESC').all() as Array<{ session_id: string }>).map((r) => r.session_id)
         : [];
+      conn.prepare('INSERT INTO setting (key, value) VALUES (?, ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value')
+        .run(EXPORTED_SETTING, fingerprint(conn));
       conn.prepare('VACUUM INTO ?').run(copy);
     } finally {
       conn.close();
@@ -338,10 +358,15 @@ async function restoreWorktree(repo: Repo, base: string, tree: string): Promise<
   }
 }
 
-/** Conversations, reviews or unsent comments still under way in this clone's database. */
+/**
+ * Conversations, reviews or unsent comments under way in this clone's database that an import
+ * would replace. None when the session was exported from here and nothing has changed since:
+ * it went with the export, and comes back with whatever was done on the other computer.
+ */
 function liveContent(dbPath: string): number {
   const store = new Store(dbPath);
   try {
+    if (store.getSetting(EXPORTED_SETTING) === fingerprint(store.db)) return 0;
     const row = store.db.prepare(`
       SELECT (SELECT COUNT(*) FROM thread WHERE archived_at IS NULL)
            + (SELECT COUNT(*) FROM review WHERE archived_at IS NULL AND status IN ('submitted', 'in_progress')) AS n

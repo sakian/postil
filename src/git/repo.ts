@@ -293,19 +293,42 @@ export class Repo {
     return entry;
   }
 
+  /**
+   * Look up many paths in one tree with one `ls-tree` per batch, so the entryAt calls that follow
+   * hit the cache rather than each starting a git process.
+   */
+  async prefetchEntries(tree: string, paths: Iterable<string>): Promise<void> {
+    assertOid(tree, 'tree id');
+    const wanted = [...new Set(paths)].filter((p) => !this.entries.has(`${tree}\0${p}`));
+    // Batches keep the command line well under Windows' limit.
+    for (let i = 0; i < wanted.length; i += 200) {
+      const batch = wanted.slice(i, i + 200);
+      const found = await this.lsTree(tree, batch);
+      if (this.entries.size + batch.length > 20_000) this.entries.clear();
+      // A path missing here may only be hidden (a folder named beside a file inside it lists its
+      // contents instead), so entryAt still looks those up one by one.
+      for (const p of batch) if (found.has(p)) this.entries.set(`${tree}\0${p}`, found.get(p)!);
+    }
+  }
+
   private async lookupEntry(tree: string, path: string): Promise<TreeEntry | null> {
-    const out = await gitText(this.root, ['ls-tree', '-z', '--full-tree', tree, '--', path], {
+    return (await this.lsTree(tree, [path])).get(path) ?? null;
+  }
+
+  private async lsTree(tree: string, paths: string[]): Promise<Map<string, TreeEntry>> {
+    const out = await gitText(this.root, ['ls-tree', '-z', '--full-tree', tree, '--', ...paths], {
       env: { GIT_LITERAL_PATHSPECS: '1' },
     });
+    const found = new Map<string, TreeEntry>();
     for (const record of out.split('\0')) {
       const tab = record.indexOf('\t');
       if (tab < 0) continue;
       const [mode, type, oid] = record.slice(0, tab).split(' ');
-      if (record.slice(tab + 1) !== path || !mode || !type || !oid) continue;
+      if (!mode || !type || !oid) continue;
       if (type !== 'blob' && type !== 'tree' && type !== 'commit') continue;
-      return { mode, type, oid };
+      found.set(record.slice(tab + 1), { mode, type, oid });
     }
-    return null;
+    return found;
   }
 
   // ---------------------------------------------------------------- snapshots

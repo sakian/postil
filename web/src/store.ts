@@ -216,6 +216,8 @@ function startFresh(): void {
 
 let toastId = 0;
 let refreshTicket = 0;
+/** The threads refresh under way, and whether another was asked for while it ran. */
+let threadsRefresh: { again: boolean; done: Promise<void> } | null = null;
 
 
 
@@ -400,13 +402,27 @@ export const useStore = create<Store>()((set, get) => {
       }
     },
 
-    async refreshThreads() {
-      const r = get().resolved;
-      try {
-        set({ threads: (await api.threads(r ? { from: r.from.tree, to: r.to.tree } : undefined)).threads });
-      } catch (e) {
-        fail(e);
+    refreshThreads() {
+      // Claude's replies arrive in bursts, each asking for a refresh. While one is under way,
+      // the rest fold into a single follow-up that sees all of them.
+      if (threadsRefresh) {
+        threadsRefresh.again = true;
+        return threadsRefresh.done;
       }
+      const run = async () => {
+        do {
+          threadsRefresh!.again = false;
+          const r = get().resolved;
+          try {
+            set({ threads: (await api.threads(r ? { from: r.from.tree, to: r.to.tree } : undefined)).threads });
+          } catch (e) {
+            fail(e);
+          }
+        } while (threadsRefresh!.again);
+      };
+      threadsRefresh = { again: false, done: Promise.resolve() };
+      threadsRefresh.done = run().finally(() => { threadsRefresh = null; });
+      return threadsRefresh.done;
     },
 
     async refreshReviews() {
