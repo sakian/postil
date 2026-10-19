@@ -423,7 +423,7 @@ li + li { margin-top: 2px; }
   color: var(--fg); font: 14px/1.5 var(--sans); resize: vertical;
 }
 .review-panel section + section { margin-top: 20px; border-top: 1px solid var(--border-muted); padding-top: 8px; }
-.pending-list { padding-left: 18px; margin: 6px 0 10px; font-size: 13px; }
+.pending-list { padding-left: 18px; margin: 14px 0 10px; font-size: 13px; }
 .history-item { border: 1px solid var(--border); border-radius: var(--radius); padding: 8px 10px; margin-bottom: 8px; }
 .history-head { display: flex; gap: 8px; align-items: center; font-size: 13px; }
 .history-summary { display: flex; gap: 8px; align-items: flex-start; margin-top: 6px; padding-top: 6px; border-top: 1px dashed var(--border-muted); }
