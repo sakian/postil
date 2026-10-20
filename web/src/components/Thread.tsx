@@ -229,14 +229,17 @@ export function ThreadWidget({ thread, showLocation = false, defaultOpen, autoOp
   thread: ThreadView;
   /** Show the file and lines in the head, and offer the original and current diff (the conversations list). */
   showLocation?: boolean;
-  /** Start expanded or not; by default open unless resolved. */
+  /** Start expanded or not; by default open unless resolved or waiting on Claude after your reply. */
   defaultOpen?: boolean;
   /** Expand now, when this turns true. */
   autoOpen?: boolean;
   /** The user expanded or collapsed it. */
   onToggle?(open: boolean): void;
 }) {
-  const [open, setOpen] = useState(defaultOpen ?? thread.status !== 'resolved');
+  // Once you have answered Claude, the thread is Claude's turn: fold it until Claude replies.
+  const answered = thread.comments.at(-1)?.author === 'user' && thread.comments.some((c) => c.author === 'claude');
+  const openByDefault = defaultOpen ?? (thread.status !== 'resolved' && !answered);
+  const [open, setOpen] = useState(openByDefault);
   const replyKey = `reply:${thread.id}`;
   const [replyingNow, setReplying] = useState(false);
   // Unsent reply text keeps the composer open, across remounts and after "Undo". The same thread can
@@ -251,7 +254,7 @@ export function ThreadWidget({ thread, showLocation = false, defaultOpen, autoOp
   const ref = useRef<HTMLDivElement>(null);
   const last = thread.comments.at(-1);
 
-  useEffect(() => setOpen(defaultOpen ?? thread.status !== 'resolved'), [thread.status, defaultOpen]);
+  useEffect(() => setOpen(openByDefault), [openByDefault]);
   useEffect(() => { if (autoOpen) setOpen(true); }, [autoOpen]);
   useEffect(() => {
     if (!focused) return;

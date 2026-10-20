@@ -1052,6 +1052,7 @@ export class Postil {
    */
   async resetReviews(): Promise<{ threads: number; reviews: number; drafts: number; unpinned: number }> {
     const reset = this.store.resetReviews('Discarded: the user reset the review before Claude finished it.');
+    this.restartReviewNumbers();
     const { unpinned } = await this.prune();
     this.bus.emit({ type: 'archive.changed' });
     this.bus.emit({ type: 'draft.changed' });
@@ -1096,9 +1097,10 @@ export class Postil {
     await pruneExports(repo, await this.repo.currentBranch())
       .catch((e: unknown) => console.error(`postil: could not clear old exports: ${(e as Error).message}`));
     const archived = await this.archiveResolved();
-    // Each session stands alone: the next one starts on all changes with nothing viewed.
+    // Each session stands alone: the next one starts on all changes with nothing viewed, at review #1.
     this.store.clearMarks();
     this.store.deleteUiState('scope');
+    this.restartReviewNumbers();
     this.bus.emit({ type: 'marks.changed' });
     // Claude does any committing and pushing the user asked for, then stops listening.
     // The user's own instructions replace the commit and push options.
@@ -1129,6 +1131,13 @@ export class Postil {
       unpinned++;
     }
     return { unpinned };
+  }
+
+  /** Start numbering at review #1 again if nothing is left in play. A saved since-review scope would point at an old number. */
+  private restartReviewNumbers(): void {
+    if (!this.store.restartReviewNumbers()) return;
+    const scope = this.store.getUiState('scope') as { kind?: string } | null;
+    if (scope?.kind === 'since_review') this.store.deleteUiState('scope');
   }
 
   archivedThreads(): ThreadView[] {

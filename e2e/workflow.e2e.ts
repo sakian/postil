@@ -121,14 +121,17 @@ describe('the reviewing workflow', { timeout: 180_000 }, () => {
     await page.keyboard.press('Escape');
   });
 
-  it('stops asking for your turn once you have replied, even before submitting', async () => {
+  it('stops asking for your turn and folds the conversation once you have replied, even before submitting', async () => {
     await show('pkg/f02.ts');
     const thread = file('pkg/f02.ts').locator('.thread', { hasText: 'Why "five"?' });
     await thread.locator('.chip-you').waitFor();
     await thread.locator('.reply-stub').click();
     await thread.locator('textarea').fill('Yes, keep it.');
     await thread.getByRole('button', { name: 'Add reply' }).click();
-    await until(async () => (await thread.locator('.chip-you').count()) === 0, 'the "Your turn" chip to go');
+    // Folded, the conversation shows only its latest comment, your reply.
+    const folded = file('pkg/f02.ts').locator('.thread.is-collapsed', { has: page.locator('.thread-peek', { hasText: 'Yes, keep it.' }) });
+    await folded.waitFor();
+    assert.equal(await folded.locator('.chip-you').count(), 0, 'the "Your turn" chip is gone');
     await page.getByRole('button', { name: /Conversations/ }).click();
     const yours = page.locator('.panel-filters').getByRole('button', { name: /Your turn/ });
     assert.match(await yours.innerText(), /Your turn\s*0/);

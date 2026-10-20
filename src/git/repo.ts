@@ -371,7 +371,7 @@ export class Repo {
     await rm(`${index}.lock`, { force: true });
     if (reseedFromHead) await rm(index, { force: true });
 
-    if (!(await exists(index))) {
+    if (!(await exists(index)) || (!reseedFromHead && (await this.hasStaleCase(env)))) {
       const realIndex = (await gitText(this.root, ['rev-parse', '--git-path', 'index'])).trim();
       const realPath = realIndex.startsWith('/') ? realIndex : join(this.root, realIndex);
       if (!reseedFromHead && (await exists(realPath))) {
@@ -425,6 +425,29 @@ export class Repo {
         input: paths.map((p) => `${p}\0`).join(''),
       });
     }
+  }
+
+  /**
+   * With core.ignorecase true, as on Windows, `git add -A` keeps the spelling an entry already
+   * has, so a file renamed only in case (GLOSSARY.md to glossary.md) would keep its old name in
+   * the private index forever (or, on a case-sensitive disk, drop out of it). When the private
+   * index spells a path the user's own index spells differently, start again from that index.
+   */
+  private async hasStaleCase(env: Record<string, string>): Promise<boolean> {
+    let ignoreCase = 'false';
+    try {
+      ignoreCase = (await gitText(this.root, ['config', '--bool', 'core.ignorecase'])).trim();
+    } catch (e) {
+      // Unset, which git reads as false.
+      if (!(e instanceof GitError)) throw e;
+    }
+    if (ignoreCase !== 'true') return false;
+
+    const paths = async (opts: { env?: Record<string, string> }): Promise<string[]> =>
+      (await gitText(this.root, ['ls-files', '-z'], opts)).split(' ').filter(Boolean);
+    const staged = new Set(await paths({}));
+    const stagedFolded = new Set([...staged].map((p) => p.toLowerCase()));
+    return (await paths({ env })).some((p) => !staged.has(p) && stagedFolded.has(p.toLowerCase()));
   }
 
   /**
