@@ -218,6 +218,15 @@ export interface AppliedSuggestion {
   end_line: number;
 }
 
+/** A file attached to a comment, and the Markdown that embeds it. */
+export interface AttachmentView {
+  blob: string;
+  name: string;
+  type: string;
+  size: number;
+  markdown: string;
+}
+
 export interface ApiErrorBody {
   error: { code: string; message: string; details?: unknown };
 }

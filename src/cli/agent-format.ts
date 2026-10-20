@@ -1,4 +1,5 @@
 import type { AgentReview, AgentThread, ReviewView, ThreadView } from '../core/api-types.ts';
+import { attachmentRefs } from '../core/attachments.ts';
 import { hasSuggestion } from '../core/suggestion.ts';
 
 /** A code fence longer than any backtick run inside the text, so comment content cannot break out of it. */
@@ -63,6 +64,9 @@ export function formatReview(r: AgentReview): string {
   out.push('', `${needs.length} of ${r.threads.length} thread(s) need your reply.`);
   for (const t of r.threads) out.push('', formatThread(t));
   const suggestions = r.threads.some((t) => t.comments.some((c) => c.suggestion));
+  if ([r.body, ...r.threads.flatMap((t) => t.comments.map((c) => c.body))].some((b) => attachmentRefs(b).length)) {
+    out.push('', 'The files the user attached (attachment:<id> in the comments) follow this text, labelled by id.');
+  }
   out.push(
     '',
     '---',

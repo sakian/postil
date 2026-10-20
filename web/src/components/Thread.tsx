@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type KeyboardEvent } from 'react';
 import type { CommentView, FileChange, ThreadView } from '../../../src/core/api-types.ts';
 import { currentLines, isOutdated, isYourTurn, lineLabel, relativeTime, sidePath, snippet } from '../format.ts';
 import { lineDiff } from '../lib/linediff.ts';
+import { useAttach } from './Attach.tsx';
 import { newThreadKey, useStore, type Target, type ThreadTarget } from '../store.ts';
 import { ThreadDiff } from './ThreadDiff.tsx';
 import { Icon } from './icons.tsx';
@@ -44,6 +45,7 @@ export function Composer({ draftKey, initial = '', placeholder, submitLabel, see
   const [preview, setPreview] = useState(false);
   const [busy, setBusy] = useState(false);
   const ref = useRef<HTMLTextAreaElement>(null);
+  const attach = useAttach(ref, (fn) => { setBody(fn); setPreview(false); });
 
   useEffect(() => {
     const el = ref.current;
@@ -53,7 +55,7 @@ export function Composer({ draftKey, initial = '', placeholder, submitLabel, see
   }, [autoFocus]);
 
   const submit = async () => {
-    if (!body.trim() || busy) return;
+    if (!body.trim() || busy || attach.uploading) return;
     setBusy(true);
     try {
       await onSubmit(body);
@@ -90,6 +92,7 @@ export function Composer({ draftKey, initial = '', placeholder, submitLabel, see
         <button className={preview ? '' : 'active'} onClick={() => setPreview(false)}>Write</button>
         <button className={preview ? 'active' : ''} onClick={() => setPreview(true)}>Preview</button>
         <span className="spacer" />
+        {attach.button}
         {seed != null && (
           <button className="link-btn" onClick={insertSuggestion} title="Propose replacement code for the selected lines">
             Suggest change
@@ -100,12 +103,12 @@ export function Composer({ draftKey, initial = '', placeholder, submitLabel, see
         <div className="composer-preview">{body.trim() ? <Markdown text={body} suggestionBase={seed ?? null} /> : <em>Nothing to preview</em>}</div>
       ) : (
         <textarea ref={ref} value={body} placeholder={placeholder} onChange={(e) => setBody(e.target.value)} onKeyDown={onKey}
-          rows={Math.min(14, Math.max(3, body.split('\n').length + 1))} />
+          {...attach.textareaProps} rows={Math.min(14, Math.max(3, body.split('\n').length + 1))} />
       )}
       <div className="composer-actions">
-        <span className="hint">Markdown supported. Ctrl+Enter to save.</span>
+        <span className="hint">Markdown supported. Paste or drop files to attach. Ctrl+Enter to save.</span>
         {cancel && <button className="btn" onClick={cancel}>Cancel</button>}
-        <button className="btn btn-primary" disabled={!body.trim() || busy} onClick={() => void submit()}>{submitLabel}</button>
+        <button className="btn btn-primary" disabled={!body.trim() || busy || attach.uploading > 0} onClick={() => void submit()}>{submitLabel}</button>
       </div>
     </div>
   );

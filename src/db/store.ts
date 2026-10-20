@@ -2,7 +2,7 @@ import { DatabaseSync, type SQLInputValue } from 'node:sqlite';
 import { nowIso } from '../core/util.ts';
 import { MIGRATIONS } from './schema.ts';
 import type {
-  Author, CommentRow, FileMarkRow, ReviewRow, ReviewStatus, SectionMarkRow, Side, SnapshotRow, ThreadRow, ThreadStatus,
+  AttachmentRow, Author, CommentRow, FileMarkRow, ReviewRow, ReviewStatus, SectionMarkRow, Side, SnapshotRow, ThreadRow, ThreadStatus,
 } from './types.ts';
 
 type Params = Record<string, SQLInputValue>;
@@ -443,10 +443,37 @@ export class Store {
     return new Set(rows.map((r) => r.t as string));
   }
 
-  /** Blobs that section marks refer to. */
-  blobsInUse(): Set<string> {
-    const rows = this.all(`SELECT from_blob AS b FROM section_mark WHERE from_blob IS NOT NULL UNION SELECT to_blob FROM section_mark WHERE to_blob IS NOT NULL`);
+  /**
+   * Blobs that section marks refer to, and attachments a live comment or review body names. An
+   * attachment uploaded since `recentSince` is kept too: its comment may not be saved yet.
+   */
+  blobsInUse(recentSince: string): Set<string> {
+    const rows = this.all(
+      `SELECT from_blob AS b FROM section_mark WHERE from_blob IS NOT NULL
+       UNION SELECT to_blob FROM section_mark WHERE to_blob IS NOT NULL
+       UNION SELECT a.blob FROM attachment a
+         WHERE a.created_at > :recentSince
+            OR EXISTS (SELECT 1 FROM comment c JOIN thread t ON t.id = c.thread_id
+                       WHERE t.archived_at IS NULL AND instr(c.body, 'attachment:' || a.blob) > 0)
+            OR EXISTS (SELECT 1 FROM review r WHERE r.archived_at IS NULL AND instr(r.body, 'attachment:' || a.blob) > 0)`,
+      { recentSince },
+    );
     return new Set(rows.map((r) => r.b as string));
+  }
+
+  // ------------------------------------------------------------------ attachments
+
+  /** Record an attachment. The same content uploaded again keeps its first name and type. */
+  insertAttachment(a: { blob: string; name: string; type: string; size: number }): AttachmentRow {
+    this.run(
+      'INSERT OR IGNORE INTO attachment (blob, name, type, size, created_at) VALUES (:blob, :name, :type, :size, :now)',
+      { ...a, now: nowIso() },
+    );
+    return this.getAttachment(a.blob)!;
+  }
+
+  getAttachment(blob: string): AttachmentRow | null {
+    return (this.one('SELECT * FROM attachment WHERE blob = :blob', { blob }) as unknown as AttachmentRow | undefined) ?? null;
   }
 
   deleteSnapshot(tree: string): void {

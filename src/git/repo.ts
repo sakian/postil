@@ -266,6 +266,11 @@ export class Repo {
     return content;
   }
 
+  /** Write content to the object store and return its blob id. */
+  async writeBlob(content: Buffer): Promise<string> {
+    return (await gitText(this.root, ['hash-object', '-w', '--stdin'], { input: content })).trim();
+  }
+
   /** Size in bytes, without reading the content. */
   async blobSize(oid: string): Promise<number> {
     assertOid(oid, 'blob id');

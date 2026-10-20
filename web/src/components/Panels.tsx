@@ -3,6 +3,7 @@ import { api } from '../api.ts';
 import type { ReviewView, ThreadView } from '../../../src/core/api-types.ts';
 import { isOutdated, isYourTurn, lineLabel, placement, relativeTime, snippet, threadFile } from '../format.ts';
 import { askToNotify, useStore } from '../store.ts';
+import { useAttach } from './Attach.tsx';
 import { FinishControls, useFinishable } from './Finish.tsx';
 import { Icon } from './icons.tsx';
 import { Markdown } from './Markdown.tsx';
@@ -116,6 +117,9 @@ function ReviewPanel() {
   const [busy, setBusy] = useState(false);
   const [writingOverall, setWritingOverall] = useState(false);
   const save = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const overallRef = useRef<HTMLTextAreaElement>(null);
+  const bodyNow = useRef(body);
+  bodyNow.current = body;
 
   useEffect(() => setBody((b) => (b === '' ? (draft?.body ?? '') : b)), [draft?.body]);
 
@@ -124,11 +128,12 @@ function ReviewPanel() {
     clearTimeout(save.current);
     save.current = setTimeout(() => void setDraftBody(value), 500);
   };
+  const attach = useAttach(overallRef, (fn) => onBody(fn(bodyNow.current)));
 
   const pendingThreads = threads.filter((t) => t.comments.some((c) => c.draft));
   const pendingCount = draft?.comment_count ?? 0;
   const nothingToSend = pendingCount === 0 && body.trim() === '';
-  const canSubmit = !nothingToSend && !busy;
+  const canSubmit = !nothingToSend && !busy && attach.uploading === 0;
   const finishable = useFinishable();
   const history = reviews.filter((r) => r.status !== 'draft').sort((a, b) => b.id - a.id);
 
@@ -170,9 +175,12 @@ function ReviewPanel() {
           </p>
           {overall ? (
             <>
-              <textarea value={body} onChange={(e) => onBody(e.target.value)} rows={4} autoFocus={writingOverall}
-                placeholder="Overall comment for this review" />
-              <button className="link-btn" onClick={() => { onBody(''); setWritingOverall(false); }}>Remove overall comment</button>
+              <textarea ref={overallRef} value={body} onChange={(e) => onBody(e.target.value)} rows={4} autoFocus={writingOverall}
+                placeholder="Overall comment for this review (paste or drop files to attach)" {...attach.textareaProps} />
+              <div className="overall-actions">
+                {attach.button}
+                <button className="link-btn" onClick={() => { onBody(''); setWritingOverall(false); }}>Remove overall comment</button>
+              </div>
             </>
           ) : pendingCount > 0 && <p>{overallLink('Add an overall comment')}</p>}
           {!nothingToSend && (

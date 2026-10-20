@@ -395,6 +395,8 @@ li + li { margin-top: 2px; }
 .markdown .md-pre { background: var(--bg-subtle); border: 1px solid var(--border-muted); padding: 8px 12px; border-radius: var(--radius); overflow: auto; font-size: 12px; }
 .markdown .md-pre code { background: none; padding: 0; font-size: 100%; }
 .markdown blockquote { margin: 6px 0; padding-left: 12px; border-left: 3px solid var(--border); color: var(--fg-muted); }
+.markdown .md-img { display: block; max-width: 100%; max-height: 420px; margin: 6px 0; border: 1px solid var(--border-muted); border-radius: var(--radius); background: var(--bg-subtle); }
+.overall-actions { display: flex; gap: 12px; align-items: center; }
 .markdown ul, .markdown ol { padding-left: 22px; margin: 6px 0; }
 .markdown table { border-collapse: collapse; }
 .markdown th, .markdown td { border: 1px solid var(--border); padding: 3px 8px; }

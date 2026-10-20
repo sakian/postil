@@ -33,17 +33,20 @@ export interface ConnectOptions {
 export class PostilClient {
   readonly info: ServerInfo;
   readonly session: string | undefined;
+  /** The repository's postil state directory, inside its git directory. */
+  readonly stateDir: string;
 
-  private constructor(info: ServerInfo, session: string | undefined) {
+  private constructor(info: ServerInfo, session: string | undefined, stateDir: string) {
     this.info = info;
     this.session = session;
+    this.stateDir = stateDir;
   }
 
   static async connect(cwd: string, opts: ConnectOptions = {}): Promise<PostilClient> {
     const repo = await Repo.open(cwd);
     const info = await readServerInfo(repo.stateDir);
     if (!info || !(await probe(info, repo.root, opts.probeTimeoutMs))) throw new NotRunningError(repo.root);
-    return new PostilClient(info, opts.session);
+    return new PostilClient(info, opts.session, repo.stateDir);
   }
 
   get uiUrl(): string {
@@ -72,5 +75,22 @@ export class PostilClient {
       throw new ApiError(res.status, payload.error?.code ?? 'error', payload.error?.message ?? res.statusText, payload.error?.details);
     }
     return payload as T;
+  }
+
+  /** A GET whose answer is a file rather than JSON. */
+  async download(path: string): Promise<{ content: Buffer; type: string; disposition: string }> {
+    const res = await fetch(`${this.info.url}${path}`, {
+      headers: { authorization: `Bearer ${this.info.token}` },
+      signal: AbortSignal.timeout(30_000),
+    });
+    if (!res.ok) {
+      const payload = (await res.json().catch(() => ({}))) as { error?: { code: string; message: string } };
+      throw new ApiError(res.status, payload.error?.code ?? 'error', payload.error?.message ?? res.statusText);
+    }
+    return {
+      content: Buffer.from(await res.arrayBuffer()),
+      type: res.headers.get('content-type') ?? 'application/octet-stream',
+      disposition: res.headers.get('content-disposition') ?? '',
+    };
   }
 }
