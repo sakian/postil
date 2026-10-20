@@ -596,6 +596,35 @@ describe('anchoring threads to a later diff', () => {
       fx.cleanup();
     }
   });
+
+  it('shows the spelling git reports after a case-only rename that follows an older thread', async () => {
+    const fx = makeFixture();
+    let postil: Postil | undefined;
+    try {
+      fx.git('config', 'core.ignorecase', 'true');
+      fx.write('docs/GLOSSARY.md', numbered(20));
+      fx.commit('base');
+      postil = await Postil.open(fx.dir);
+      fx.write('docs/GLOSSARY.md', numbered(20, { 1: 'changed' }));
+      const s1 = await postil.resolveScope({ kind: 'all' });
+      const old = await postil.createThread({ from_tree: s1.from.tree, to_tree: s1.to.tree, path: 'docs/GLOSSARY.md', side: 'new', start_line: 10, end_line: 11, body: 'before the rename' });
+
+      fx.git('mv', 'docs/GLOSSARY.md', 'docs/glossary.md');
+      fx.commit('lower-case the glossary');
+      fx.write('docs/glossary.md', `${numbered(20, { 1: 'changed' })}a\nb\nc\nd\n`);
+
+      const s2 = await postil.resolveScope({ kind: 'all' });
+      const files = await postil.files(s2.from.tree, s2.to.tree);
+      assert.deepEqual(files.map((f) => f.new_path ?? f.path), ['docs/glossary.md']);
+      const threads = await postil.threadsIn({ from_tree: s2.from.tree, to_tree: s2.to.tree });
+      assert.equal(threads.find((t) => t.id === old.id)!.anchor!.path, 'docs/glossary.md');
+      const fresh = await postil.createThread({ from_tree: s2.from.tree, to_tree: s2.to.tree, path: 'docs/glossary.md', side: 'new', start_line: 21, end_line: 24, body: 'after the rename' });
+      assert.equal(fresh.path, 'docs/glossary.md');
+    } finally {
+      postil?.close();
+      fx.cleanup();
+    }
+  });
 });
 
 describe('applying suggestions', () => {
