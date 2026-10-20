@@ -371,7 +371,7 @@ export class Repo {
     await rm(`${index}.lock`, { force: true });
     if (reseedFromHead) await rm(index, { force: true });
 
-    if (!(await exists(index))) {
+    if (!(await exists(index)) || (!reseedFromHead && (await this.hasStaleCase(env)))) {
       const realIndex = (await gitText(this.root, ['rev-parse', '--git-path', 'index'])).trim();
       const realPath = realIndex.startsWith('/') ? realIndex : join(this.root, realIndex);
       if (!reseedFromHead && (await exists(realPath))) {
@@ -383,7 +383,6 @@ export class Repo {
     await git(this.root, ['add', '-A'], { env });
     await this.dropIgnored(env);
     await this.adoptStagedModes(env);
-    await this.adoptStagedCase(env);
     return (await gitText(this.root, ['write-tree'], { env })).trim();
   }
 
@@ -431,9 +430,10 @@ export class Repo {
   /**
    * With core.ignorecase true, as on Windows, `git add -A` keeps the spelling an entry already
    * has, so a file renamed only in case (GLOSSARY.md to glossary.md) would keep its old name in
-   * the private index forever. Take the spelling from the user's own index, as git reports it.
+   * the private index forever (or, on a case-sensitive disk, drop out of it). When the private
+   * index spells a path the user's own index spells differently, start again from that index.
    */
-  private async adoptStagedCase(env: Record<string, string>): Promise<void> {
+  private async hasStaleCase(env: Record<string, string>): Promise<boolean> {
     let ignoreCase = 'false';
     try {
       ignoreCase = (await gitText(this.root, ['config', '--bool', 'core.ignorecase'])).trim();
@@ -441,37 +441,13 @@ export class Repo {
       // Unset, which git reads as false.
       if (!(e instanceof GitError)) throw e;
     }
-    if (ignoreCase !== 'true') return;
+    if (ignoreCase !== 'true') return false;
 
     const paths = async (opts: { env?: Record<string, string> }): Promise<string[]> =>
       (await gitText(this.root, ['ls-files', '-z'], opts)).split(' ').filter(Boolean);
-    const staged = await paths({});
-    const snapshot = new Set(await paths({ env }));
-    const stagedByFold = new Map<string, string>();
-    for (const p of staged) if (!snapshot.has(p)) stagedByFold.set(p.toLowerCase(), p);
-    if (stagedByFold.size === 0) return;
-
-    const renames: Array<[string, string]> = [];
-    for (const p of snapshot) {
-      const want = stagedByFold.get(p.toLowerCase());
-      if (want !== undefined && want !== p) renames.push([p, want]);
-    }
-    if (renames.length === 0) return;
-    const out = await gitText(this.root, ['ls-files', '-s', '-z', '--', ...renames.map(([p]) => p)], {
-      env: { ...env, GIT_LITERAL_PATHSPECS: '1' },
-    });
-    const entries = new Map<string, { mode: string; oid: string }>();
-    for (const record of out.split(' ')) {
-      const tab = record.indexOf('	');
-      const [mode, oid] = record.slice(0, tab).split(' ');
-      if (tab > 0 && mode && oid) entries.set(record.slice(tab + 1), { mode, oid });
-    }
-    // Remove each old spelling (mode 0), then add the same content under the new one.
-    const input = renames.flatMap(([from, to]) => {
-      const e = entries.get(from);
-      return e ? [`0 ${e.oid}	${from} `, `${e.mode} ${e.oid}	${to} `] : [];
-    });
-    await git(this.root, ['update-index', '-z', '--index-info'], { env, input: input.join('') });
+    const staged = new Set(await paths({}));
+    const stagedFolded = new Set([...staged].map((p) => p.toLowerCase()));
+    return (await paths({ env })).some((p) => !staged.has(p) && stagedFolded.has(p.toLowerCase()));
   }
 
   /**
