@@ -2,6 +2,7 @@ import { timingSafeEqual } from 'node:crypto';
 import { Hono, type Context } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
 import { z, ZodError } from 'zod';
+import { IMAGE_TYPES, MAX_ATTACHMENT_BYTES } from '../core/attachments.ts';
 import type { Postil } from '../core/postil.ts';
 import { HttpError } from '../core/util.ts';
 import { VERSION } from '../core/version.ts';
@@ -134,10 +135,15 @@ export function createApp(postil: Postil, opts: AppOptions): Hono {
     await next();
   });
 
-  app.use('/api/*', bodyLimit({
+  const jsonLimit = bodyLimit({
     maxSize: 1024 * 1024,
     onError: (c) => c.json({ error: { code: 'body_too_large', message: 'request body exceeds 1 MiB' } }, 413),
-  }));
+  });
+  const uploadLimit = bodyLimit({
+    maxSize: MAX_ATTACHMENT_BYTES,
+    onError: (c) => c.json({ error: { code: 'body_too_large', message: `attachments are limited to ${MAX_ATTACHMENT_BYTES / 1024 / 1024} MiB` } }, 413),
+  });
+  app.use('/api/*', (c, next) => (c.req.method === 'POST' && c.req.path === '/api/attachments' ? uploadLimit : jsonLimit)(c, next));
 
   app.onError((err, c) => {
     if (err instanceof HttpError) {
@@ -232,6 +238,22 @@ export function createApp(postil: Postil, opts: AppOptions): Hono {
   app.patch('/api/comments/:id', async (c) => c.json(postil.editDraft(param(c, 'id'), (await json(c, schemas.body)).body)));
   app.delete('/api/comments/:id', (c) => c.json(postil.deleteDraft(param(c, 'id'))));
   app.post('/api/comments/:id/apply', async (c) => c.json(await postil.applySuggestion(param(c, 'id'))));
+
+  // -------------------------------------------------------------- attachments
+  // The file is the raw request body, so pasting a screenshot needs no multipart encoding.
+  app.post('/api/attachments', async (c) => {
+    const content = Buffer.from(await c.req.arrayBuffer());
+    return c.json(await postil.addAttachment(content, c.req.query('name') ?? '', c.req.header('content-type')), 201);
+  });
+  app.get('/api/attachments/:oid', async (c) => {
+    const { row, content } = await postil.attachment(oid.parse(c.req.param('oid')));
+    const inline = IMAGE_TYPES.has(row.type) || row.type === 'text/plain';
+    c.header('content-type', inline ? (row.type === 'text/plain' ? 'text/plain; charset=utf-8' : row.type) : 'application/octet-stream');
+    c.header('content-disposition', `${inline ? 'inline' : 'attachment'}; filename*=UTF-8''${encodeURIComponent(row.name)}`);
+    c.header('content-security-policy', "sandbox; default-src 'none'; style-src 'unsafe-inline'; img-src data:");
+    c.header('cache-control', 'private, max-age=31536000, immutable');
+    return c.body(new Uint8Array(content));
+  });
 
   // -------------------------------------------------------------- reviews
   app.get('/api/reviews', (c) => c.json({ reviews: postil.reviews() }));

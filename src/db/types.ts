@@ -55,6 +55,14 @@ export interface CommentRow {
   applied_at: string | null;
 }
 
+export interface AttachmentRow {
+  blob: string;
+  name: string;
+  type: string;
+  size: number;
+  created_at: string;
+}
+
 export interface FileMarkRow {
   path: string;
   blob: string;

@@ -1,17 +1,60 @@
+import { mkdir, writeFile } from 'node:fs/promises';
+import { join } from 'node:path';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { z } from 'zod';
 import type { AgentReview, AppliedSuggestion, ListenResult, ReviewView, ThreadView } from '../core/api-types.ts';
+import { attachmentRefs, cleanName } from '../core/attachments.ts';
 import { ApiError, NotRunningError, PostilClient } from '../core/client.ts';
 import { VERSION } from '../core/version.ts';
 import { formatPending, formatReview, formatUiThread } from './agent-format.ts';
 import { openBrowser, startDaemon, waitCommand } from './daemon.ts';
 import { describeExport, describeExports, describeImport, resumeCommand } from './transfer-format.ts';
 
-type ToolResult = { content: Array<{ type: 'text'; text: string }>; isError?: boolean };
+type Content = { type: 'text'; text: string } | { type: 'image'; data: string; mimeType: string };
+type ToolResult = { content: Content[]; isError?: boolean };
 
 const text = (t: string): ToolResult => ({ content: [{ type: 'text', text: t }] });
 const failure = (t: string): ToolResult => ({ content: [{ type: 'text', text: t }], isError: true });
+
+/** Image types Claude can be shown, and the largest it accepts (5 MB once base64-encoded). */
+const VISIBLE_IMAGES = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp']);
+const MAX_VISIBLE_IMAGE = 3_750_000;
+const MAX_VISIBLE_IMAGES = 10;
+
+/**
+ * The files the user attached in `bodies`, after the text: images Claude can see are shown
+ * inline, and everything else is written under the state directory for Claude to read.
+ */
+async function withAttachments(client: PostilClient, result: string, bodies: readonly string[]): Promise<ToolResult> {
+  const blobs = [...new Set(bodies.flatMap(attachmentRefs))];
+  const content: Content[] = [{ type: 'text', text: result }];
+  let shown = 0;
+  for (const blob of blobs) {
+    let file: Awaited<ReturnType<PostilClient['download']>>;
+    try {
+      file = await client.download(`/api/attachments/${blob}`);
+    } catch (e) {
+      content.push({ type: 'text', text: `Attachment attachment:${blob} could not be read: ${e instanceof Error ? e.message : String(e)}` });
+      continue;
+    }
+    const encoded = /filename\*=UTF-8''([^;]+)/.exec(file.disposition)?.[1];
+    const name = cleanName(encoded ? decodeURIComponent(encoded) : '');
+    const type = file.type.split(';')[0]!.trim();
+    if (VISIBLE_IMAGES.has(type) && file.content.length <= MAX_VISIBLE_IMAGE && shown < MAX_VISIBLE_IMAGES) {
+      shown++;
+      content.push({ type: 'text', text: `Attachment attachment:${blob} (${name}):` });
+      content.push({ type: 'image', data: file.content.toString('base64'), mimeType: type });
+      continue;
+    }
+    const dir = join(client.stateDir, 'attachments', blob);
+    await mkdir(dir, { recursive: true });
+    const path = join(dir, name);
+    await writeFile(path, file.content);
+    content.push({ type: 'text', text: `Attachment attachment:${blob} (${name}, ${file.content.length} bytes) is saved at ${path}. Read it from there.` });
+  }
+  return { content };
+}
 
 /**
  * The MCP server the Claude Code plugin runs. It holds no state: every call finds the review
@@ -117,7 +160,11 @@ export function createMcpServer(env: { projectDir: string; session: string | und
       inputSchema: { review_id: z.number().int().positive() },
     },
     async ({ review_id }) =>
-      withClient(async (client) => text(formatReview(await client.request<AgentReview>('GET', `/api/agent/reviews/${review_id}`)))),
+      withClient(async (client) => {
+        const review = await client.request<AgentReview>('GET', `/api/agent/reviews/${review_id}`);
+        const bodies = [review.body, ...review.threads.flatMap((t) => t.comments.filter((c) => c.author === 'user').map((c) => c.body))];
+        return withAttachments(client, formatReview(review), bodies);
+      }),
   );
 
   server.registerTool(
@@ -131,7 +178,8 @@ export function createMcpServer(env: { projectDir: string; session: string | und
       withClient(async (client) => {
         const thread = await client.request<ThreadView>('GET', `/api/threads/${thread_id}`);
         if (!thread.published) return failure(`thread ${thread_id} has not been submitted yet`);
-        return text(formatUiThread(thread));
+        const bodies = thread.comments.filter((c) => !c.draft && c.author === 'user').map((c) => c.body);
+        return withAttachments(client, formatUiThread(thread), bodies);
       }),
   );
 

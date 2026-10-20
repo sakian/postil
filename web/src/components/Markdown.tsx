@@ -1,6 +1,8 @@
 import { Children, isValidElement, useEffect, useState, type ReactElement, type ReactNode } from 'react';
-import ReactMarkdown, { type Components } from 'react-markdown';
+import ReactMarkdown, { defaultUrlTransform, type Components } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import { attachmentBlob } from '../../../src/core/attachments.ts';
+import { api } from '../api.ts';
 import { highlight, renderTokens, type Token } from '../highlight/index.tsx';
 
 /** A fenced code block, coloured once its tokens arrive from the worker. */
@@ -56,6 +58,12 @@ function Suggestion({ before, after, apply }: { before: string | null; after: st
   );
 }
 
+/** Attachments resolve to this server; every other URL gets react-markdown's usual sanitising. */
+function urlTransform(url: string): string {
+  const blob = attachmentBlob(url);
+  return blob ? api.attachmentUrl(blob) : defaultUrlTransform(url);
+}
+
 /**
  * Comment text. Raw HTML in the source is shown as text, never rendered, and the page's
  * content security policy blocks remote images, so nothing in a comment can reach the network.
@@ -76,10 +84,17 @@ export function Markdown({ text, suggestionBase, apply }: { text: string; sugges
     a({ href, children }) {
       return <a href={href} target="_blank" rel="noopener noreferrer">{children}</a>;
     },
+    img({ src, alt }) {
+      return (
+        <a href={typeof src === 'string' ? src : undefined} target="_blank" rel="noopener noreferrer" title="Open full size">
+          <img className="md-img" src={src} alt={alt ?? ''} loading="lazy" />
+        </a>
+      );
+    },
   };
   return (
     <div className="markdown">
-      <ReactMarkdown remarkPlugins={[remarkGfm]} components={components}>{text}</ReactMarkdown>
+      <ReactMarkdown remarkPlugins={[remarkGfm]} components={components} urlTransform={urlTransform}>{text}</ReactMarkdown>
     </div>
   );
 }

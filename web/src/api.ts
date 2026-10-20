@@ -1,5 +1,5 @@
 import type {
-  AnchoredSectionMark, AppliedSuggestion, SectionMarkRow, Side, BaseInfo, BranchesInfo, CommitsInfo, FinishOptions, HistoryInfo, Preferences, FileDiff, FileMarkRow, Health, NewThreadInput, ResolvedDiff, ReviewView, Scope, ThreadView,
+  AnchoredSectionMark, AppliedSuggestion, AttachmentView, SectionMarkRow, Side, BaseInfo, BranchesInfo, CommitsInfo, FinishOptions, HistoryInfo, Preferences, FileDiff, FileMarkRow, Health, NewThreadInput, ResolvedDiff, ReviewView, Scope, ThreadView,
 } from '../../src/core/api-types.ts';
 
 const TOKEN_KEY = 'postil.token';
@@ -48,7 +48,7 @@ export function getToken(): string | null {
 }
 
 async function call<T>(method: string, path: string, body?: unknown, signal?: AbortSignal): Promise<T> {
-  const res = await fetch(path, {
+  return parse<T>(await fetch(path, {
     method,
     ...(signal && { signal }),
     headers: {
@@ -56,8 +56,10 @@ async function call<T>(method: string, path: string, body?: unknown, signal?: Ab
       ...(body !== undefined && { 'content-type': 'application/json' }),
     },
     ...(body !== undefined && { body: JSON.stringify(body) }),
-  });
-  // An error response may have no JSON body; a successful one that cannot be read (cut off, or
+  }));
+}
+
+async function parse<T>(res: Response): Promise<T> {  // An error response may have no JSON body; a successful one that cannot be read (cut off, or
   // cancelled mid-download) is a failure, never an empty result.
   let payload: { error?: { code: string; message: string; details?: unknown } };
   try {
@@ -89,6 +91,15 @@ export const api = {
   rawUrl: (oid: string, path: string) => `/api/blobs/${oid}/raw?${q({ path, token })}`,
   /** Like `rawUrl`, for the file at `path` in a snapshot tree. */
   treeRawUrl: (tree: string, path: string) => `/api/trees/${tree}/raw?${q({ path, token })}`,
+  /** Upload a file for a comment; the answer carries the Markdown that embeds it. */
+  uploadAttachment: async (file: Blob, name: string) =>
+    parse<AttachmentView>(await fetch(`/api/attachments?${q({ name })}`, {
+      method: 'POST',
+      headers: { ...(token && { authorization: `Bearer ${token}` }), 'content-type': file.type || 'application/octet-stream' },
+      body: file,
+    })),
+  /** Like `rawUrl`, for an attachment. */
+  attachmentUrl: (blob: string) => `/api/attachments/${blob}?${q({ token })}`,
   lines: (oid: string, start: number, end: number) =>
     call<{ lines: string[]; total: number; end: number }>('GET', `/api/blobs/${oid}/lines?${q({ start, end })}`),
 

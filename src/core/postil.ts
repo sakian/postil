@@ -2,12 +2,13 @@ import { createHash } from 'node:crypto';
 import { lstat, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { join, resolve, sep } from 'node:path';
 import { Store } from '../db/store.ts';
-import type { CommentRow, ReviewRow, SectionMarkRow, Side, ThreadRow } from '../db/types.ts';
+import type { AttachmentRow, CommentRow, ReviewRow, SectionMarkRow, Side, ThreadRow } from '../db/types.ts';
 import { GitError } from '../git/exec.ts';
 import { splitLines } from '../git/parse.ts';
 import { assertOid, Repo } from '../git/repo.ts';
 import type { FileChange, Hunk } from '../git/types.ts';
 import { reanchor, type Anchor } from './anchors.ts';
+import { attachmentMarkdown, cleanName, cleanType, MAX_ATTACHMENT_BYTES } from './attachments.ts';
 import { extractSuggestion, hasSuggestion, replaceLines } from './suggestion.ts';
 import { EventBus } from './events.ts';
 import { defaultHistoryFile, History, normalizeRemote } from './history.ts';
@@ -18,7 +19,7 @@ export { agentHint } from './hints.ts';
 import { HttpError } from './util.ts';
 
 import type {
-  AgentReview, AgentThread, AppliedSuggestion, BaseConfig, BaseInfo, BranchesInfo, CommentView, FinishOptions, Preferences, CommitsInfo, Endpoint, FileDiff, HistoryInfo, HookStatus,
+  AgentReview, AgentThread, AppliedSuggestion, AttachmentView, BaseConfig, BaseInfo, BranchesInfo, CommentView, FinishOptions, Preferences, CommitsInfo, Endpoint, FileDiff, HistoryInfo, HookStatus,
   LastSession, ListenResult, NewThreadInput, ResolvedScope, ReviewView, Scope, ThreadView,
 } from './api-types.ts';
 
@@ -35,6 +36,8 @@ const SNAPSHOT_SETTLE_TRIES = 5;
 const MAX_LINES_PER_REQUEST = 10_000;
 const MAX_UI_STATE = 256 * 1024;
 const UI_KEY = /^[\w.:-]{1,128}$/;
+/** An attachment no comment names yet is kept this long, since the comment may still be unsaved. */
+const ATTACHMENT_GRACE_MS = 24 * 60 * 60 * 1000;
 
 function requireBody(body: string, what = 'body'): string {
   if (body.trim() === '') throw new HttpError(400, `${what} must not be empty`, 'empty_body');
@@ -980,6 +983,25 @@ export class Postil {
     return mark;
   }
 
+  // ------------------------------------------------------------------ attachments
+
+  /** Store a file for a comment to refer to. It stays pinned while a live comment names it. */
+  async addAttachment(content: Buffer, name: string, type: string | undefined): Promise<AttachmentView> {
+    if (content.length === 0) throw new HttpError(400, 'the file is empty', 'empty_body');
+    if (content.length > MAX_ATTACHMENT_BYTES) {
+      throw new HttpError(413, `attachments are limited to ${MAX_ATTACHMENT_BYTES / 1024 / 1024} MiB`, 'body_too_large');
+    }
+    const blob = await this.repo.writeBlob(content);
+    await this.repo.pinBlob(blob);
+    return attachmentView(this.store.insertAttachment({ blob, name: cleanName(name), type: cleanType(type), size: content.length }));
+  }
+
+  async attachment(blob: string): Promise<{ row: AttachmentRow; content: Buffer }> {
+    const row = this.store.getAttachment(assertOid(blob, 'attachment id'));
+    if (!row) throw new HttpError(404, `no attachment ${blob}`, 'unknown_attachment');
+    return { row, content: await this.repo.readBlob(blob) };
+  }
+
   removeSectionMark(id: number): void {
     if (!this.store.removeSectionMark(id)) throw new HttpError(404, `no section mark ${id}`, 'unknown_mark');
     this.bus.emit({ type: 'marks.changed' });
@@ -1093,7 +1115,7 @@ export class Postil {
    */
   async prune(): Promise<{ unpinned: number }> {
     const trees = new Set([...this.store.treesInUse(), ...(await this.historyTrees())]);
-    const blobs = this.store.blobsInUse();
+    const blobs = this.store.blobsInUse(new Date(Date.now() - ATTACHMENT_GRACE_MS).toISOString());
     let unpinned = 0;
     for (const tree of await this.repo.pinnedTrees()) {
       if (trees.has(tree)) continue;
@@ -1139,4 +1161,8 @@ export class Postil {
   uiStateKeys(): string[] {
     return this.store.listUiStateKeys();
   }
+}
+
+function attachmentView(a: AttachmentRow): AttachmentView {
+  return { blob: a.blob, name: a.name, type: a.type, size: a.size, markdown: attachmentMarkdown(a) };
 }

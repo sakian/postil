@@ -125,4 +125,15 @@ export const MIGRATIONS: readonly string[] = [
   ALTER TABLE thread ADD COLUMN archived_at TEXT;
   ALTER TABLE review ADD COLUMN archived_at TEXT;
   `,
+  `
+  -- Files attached to comments. The content is a git blob, pinned while a live comment or
+  -- review refers to it as attachment:<blob>, so it survives gc and travels with an export.
+  CREATE TABLE attachment (
+    blob       TEXT PRIMARY KEY,
+    name       TEXT NOT NULL,
+    type       TEXT NOT NULL,
+    size       INTEGER NOT NULL,
+    created_at TEXT NOT NULL
+  );
+  `,
 ];

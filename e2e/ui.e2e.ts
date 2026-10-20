@@ -123,7 +123,18 @@ describe('postil UI', { timeout: 120_000 }, () => {
     await composer.waitFor();
     assert.match(await composer.innerText(), /lines 5–9/);
     assert.equal(await db.locator('tr.line.selected').count(), 5);
-    await composer.locator('textarea').fill('Should `close()` failures be swallowed here?');
+    const textarea = composer.locator('textarea');
+    await textarea.fill('Should `close()` failures be swallowed here?');
+    // One file through the picker, and a screenshot pasted as the clipboard delivers it.
+    await composer.locator('input[type=file]').setInputFiles({ name: 'trace.log', mimeType: 'text/plain', buffer: Buffer.from('Error: closed\n') });
+    await until(async () => /\[trace\.log\]\(attachment:[0-9a-f]{40}\)/.test(await textarea.inputValue()), 'the picked file in the comment');
+    await textarea.evaluate((el) => {
+      const png = Uint8Array.from(atob('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII='), (c) => c.charCodeAt(0));
+      const data = new DataTransfer();
+      data.items.add(new File([png], 'image.png', { type: 'image/png' }));
+      el.dispatchEvent(new ClipboardEvent('paste', { clipboardData: data, bubbles: true, cancelable: true }));
+    });
+    await until(async () => /!\[image\.png\]\(attachment:[0-9a-f]{40}\)/.test(await textarea.inputValue()), 'the pasted image in the comment');
     await shot('03-composer');
     await composer.getByRole('button', { name: 'Add review comment' }).click();
 
@@ -131,6 +142,9 @@ describe('postil UI', { timeout: 120_000 }, () => {
     await thread.waitFor();
     assert.match(await thread.innerText(), /Pending/);
     assert.match(await thread.innerText(), /close\(\)/);
+    const img = thread.locator('img.md-img');
+    await until(async () => (await img.evaluate((el: HTMLImageElement) => el.complete && el.naturalWidth)) === 1, 'the attached image to load');
+    assert.match(await thread.getByRole('link', { name: 'trace.log' }).getAttribute('href') ?? '', /^\/api\/attachments\/[0-9a-f]{40}\?token=/);
     await until(async () => /Finish review\s*1/.test(await page.locator('.topbar').innerText()), 'pending count in the header');
   });
 

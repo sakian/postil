@@ -157,6 +157,24 @@ describe('MCP server and hooks against a live review server', () => {
     const r = await hook('stop', { session_id: SESSION });
     assert.ok(r.ms < 1500, `took ${r.ms}ms`);
   });
+
+  it('get_review shows attached images to Claude and saves other files for it to read', async () => {
+    const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=', 'base64');
+    const image = await server.postil.addAttachment(png, 'shot.png', 'image/png');
+    const log = await server.postil.addAttachment(Buffer.from('boom\n'), 'crash.log', 'text/plain');
+    const scope = await server.postil.resolveScope({ kind: 'all' });
+    await server.postil.createThread({
+      from_tree: scope.from.tree, to_tree: scope.to.tree, path: 'src/db.ts', side: 'new', start_line: 6, body: `Looks wrong: ${image.markdown}\n${log.markdown}`,
+    });
+    const review = await server.postil.submitReview();
+    const r = (await mcp.callTool({ name: 'get_review', arguments: { review_id: review.id } })) as { content: Array<{ type: string; text?: string; data?: string; mimeType?: string }> };
+    assert.match(r.content[0]!.text!, /files the user attached/);
+    const shown = r.content.find((c) => c.type === 'image');
+    assert.deepEqual([shown?.mimeType, shown?.data], ['image/png', png.toString('base64')]);
+    const saved = /saved at (.+)\. Read it/.exec(textOf(r))?.[1];
+    assert.ok(saved, textOf(r));
+    assert.equal(readFileSync(saved, 'utf8'), 'boom\n');
+  });
 });
 
 describe('without a review server', () => {
