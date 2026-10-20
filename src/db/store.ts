@@ -139,14 +139,19 @@ export class Store {
 
   /** The id the draft has, or the one it will get: reviews are archived, never deleted, except an empty draft. */
   draftReviewId(): number {
-    return this.getDraftReview()?.id ?? (this.one('SELECT COALESCE(MAX(id), 0) + 1 AS id FROM review') as { id: number }).id;
+    return this.getDraftReview()?.id ?? this.nextReviewId();
+  }
+
+  /** Past reviews can have ids below 1 (see restartReviewNumbers), so SQLite's own next rowid is not used. */
+  private nextReviewId(): number {
+    return (this.one('SELECT MAX(COALESCE(MAX(id), 0), 0) + 1 AS id FROM review') as { id: number }).id;
   }
 
   getOrCreateDraftReview(): ReviewRow {
     return this.tx(() => {
       const existing = this.getDraftReview();
       if (existing) return existing;
-      const { id } = this.run("INSERT INTO review (status, created_at) VALUES ('draft', :now)", { now: nowIso() });
+      const { id } = this.run("INSERT INTO review (id, status, created_at) VALUES (:id, 'draft', :now)", { id: this.nextReviewId(), now: nowIso() });
       return this.getReview(id)!;
     });
   }
@@ -422,6 +427,25 @@ export class Store {
       const finished = this.run("UPDATE review SET archived_at = :now WHERE archived_at IS NULL", { now }).changes;
       this.clearMarks();
       return { threads, reviews: discarded + finished, drafts };
+    });
+  }
+
+  /**
+   * Number the next review #1 once every review is archived, as at the end of a session. Archived
+   * reviews keep their place in the archive under ids below 1, newest closest to 0. Returns
+   * whether numbering restarted.
+   */
+  restartReviewNumbers(): boolean {
+    return this.tx(() => {
+      // An empty draft (all its comments deleted) holds no work and would block the restart.
+      this.run("DELETE FROM review WHERE status = 'draft' AND NOT EXISTS (SELECT 1 FROM comment WHERE comment.review_id = review.id)");
+      if (this.one('SELECT 1 FROM review WHERE archived_at IS NULL')) return false;
+      const floor = (this.one('SELECT MIN(COALESCE(MIN(id), 0), 0) AS id FROM review') as { id: number }).id;
+      // Moves review ids under the comments that refer to them; the foreign key is checked at commit.
+      this.db.exec('PRAGMA defer_foreign_keys = ON');
+      this.run('UPDATE comment SET review_id = :floor - review_id WHERE review_id > 0', { floor });
+      this.run('UPDATE review SET id = :floor - id WHERE id > 0', { floor });
+      return true;
     });
   }
 

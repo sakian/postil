@@ -831,6 +831,52 @@ describe('archiving and pruning', () => {
       fx.cleanup();
     }
   });
+
+  it('numbers reviews from #1 again in the next session, after finishing or resetting, and keeps the archive', async () => {
+    const fx = makeFixture();
+    let postil: Postil | undefined;
+    try {
+      fx.write('f.txt', numbered(10));
+      fx.commit('base');
+      postil = await Postil.open(fx.dir);
+      const p = postil;
+      const round = async (body: string) => {
+        fx.write('f.txt', numbered(10, { 2: body }));
+        const s = await p.resolveScope({ kind: 'all' });
+        const t = await p.createThread({ from_tree: s.from.tree, to_tree: s.to.tree, path: 'f.txt', side: 'new', start_line: 2, body });
+        return { thread: t.id, review: await p.submitReview() };
+      };
+      const finishRound = async (r: Awaited<ReturnType<typeof round>>) => {
+        await p.agentReply(r.thread, 'done');
+        await p.completeReview(r.review.id, 'ok');
+        p.resolveThread(r.thread);
+      };
+
+      const a = await round('first');
+      await finishRound(a);
+      const b = await round('second');
+      assert.equal(b.review.id, 2);
+      await finishRound(b);
+      await postil.finishSession();
+      assert.equal(postil.draftNumber(), 1, 'a finished session restarts the numbering');
+
+      const c = await round('third');
+      assert.equal(c.review.id, 1);
+      await postil.resetReviews();
+      assert.equal(postil.draftNumber(), 1, 'so does a reset');
+      const d = await round('fourth');
+      assert.equal(d.review.id, 1);
+
+      const archived = postil.archivedThreads();
+      assert.deepEqual(archived.map((t) => t.comments[0]!.body).sort(), ['first', 'second', 'third']);
+      const ids = archived.flatMap((t) => t.comments.map((x) => x.review_id));
+      assert.ok(ids.every((id) => id < 1), 'archived reviews move out of the way');
+      assert.equal(new Set(archived.map((t) => t.comments[0]!.review_id)).size, 3, 'and stay distinct');
+    } finally {
+      postil?.close();
+      fx.cleanup();
+    }
+  });
 });
 
 describe('hardening', () => {
@@ -958,7 +1004,10 @@ describe('review fixes', () => {
       assert.equal(postil.store.getThread(unsent.id), null);
       assert.equal(postil.draft(), null);
       assert.deepEqual(postil.pendingReviews(), []);
-      assert.equal(postil.store.getReview(review.id)?.status, 'addressed');
+      const archivedReview = postil.store.getReview(postil.archivedThreads()[0]!.comments[0]!.review_id);
+      assert.equal(archivedReview?.status, 'addressed');
+      assert.equal(postil.store.getReview(review.id), null, 'the archived review gave up its number');
+      assert.equal(postil.draftNumber(), 1);
       assert.deepEqual(postil.hookStatus('session-a').in_progress, [], 'the Stop hook no longer holds Claude to it');
       assert.deepEqual([postil.fileMarks(), postil.sectionMarks()], [[], []]);
       await rejectsWith(postil.agentReply(asked.id, 'late'), 'thread_resolved');
