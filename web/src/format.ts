@@ -1,4 +1,4 @@
-import type { FileChange, ThreadView } from '../../src/core/api-types.ts';
+import type { FileChange, ReviewView, ThreadView } from '../../src/core/api-types.ts';
 
 export function shortSha(oid: string | null | undefined): string {
   return oid ? oid.slice(0, 7) : '';
@@ -81,6 +81,18 @@ export function isYourTurn(t: ThreadView): boolean {
 
 export function isOutdated(t: ThreadView): boolean {
   return t.anchor?.state === 'outdated' || t.anchor?.state === 'gone';
+}
+
+/** Claude has this review queued or open: the user's turn has not come yet. */
+export function isActive(r: Pick<ReviewView, 'status'>): boolean {
+  return r.status === 'submitted' || r.status === 'in_progress';
+}
+
+/** "review #3", "reviews #3 and #4", "reviews #3, #4 and #5". */
+export function reviewList(ids: readonly number[]): string {
+  const tags = ids.map((id) => `#${id}`);
+  if (tags.length < 2) return `review ${tags.join('')}`;
+  return `reviews ${tags.slice(0, -1).join(', ')} and ${tags.at(-1)}`;
 }
 
 /** A one-line plain-text preview of a Markdown comment. */
