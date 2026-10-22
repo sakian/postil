@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState, type CSSProperties } from 'react';
 import { initToken, setToken } from '../api.ts';
 import { subscribe } from '../events.ts';
-import { isYourTurn, markKey, viewedBlob } from '../format.ts';
+import { isActive, isYourTurn, markKey, reviewList, viewedBlob } from '../format.ts';
 import { handleKey, KEYMAP } from '../keyboard.ts';
 import { useStore } from '../store.ts';
 import { DiffPane } from './DiffPane.tsx';
@@ -50,31 +50,42 @@ function StaleBanner() {
   );
 }
 
-/** Claude finished a review: offer what changed and its replies, until dismissed. */
+/**
+ * Claude finished the reviews it had: offer what changed and its replies, until dismissed. Waits
+ * while another review is queued or open, so a batch of reviews ends in one "your turn".
+ */
 function CompletedBanner() {
-  const id = useStore((s) => s.completedReview);
-  const summary = useStore((s) => s.reviews.find((r) => r.id === s.completedReview)?.summary);
+  const ids = useStore((s) => s.completedReviews);
+  const reviews = useStore((s) => s.reviews);
   const yourTurn = useStore((s) => s.threads.filter(isYourTurn).length);
   const { setScope, setPanel, dismissCompleted } = useStore.getState();
-  if (id === null) return null;
+  if (!ids.length || reviews.some(isActive)) return null;
+  const summaries = ids.flatMap((id) => {
+    const summary = reviews.find((r) => r.id === id)?.summary;
+    return summary ? [{ id, summary }] : [];
+  });
+  const first = ids[0]!;
   return (
     <div className="banner banner-done banner-your-turn" role="status">
       <div className="your-turn-head">
         <Icon name="check" size={18} />
-        <strong>Your turn. Claude finished review #{id}.</strong>
+        <strong>Your turn. Claude finished {reviewList(ids)}.</strong>
         {yourTurn > 0 && <span className="muted">{yourTurn} conversation{yourTurn === 1 ? '' : 's'} waiting on you</span>}
         <span className="spacer" />
         <button className="icon-btn" onClick={dismissCompleted} title="Dismiss"><Icon name="close" size={14} /></button>
       </div>
-      {summary && (
-        <div className="history-summary">
+      {summaries.map(({ id, summary }) => (
+        <div key={id} className="history-summary">
           <span className="avatar avatar-claude" aria-hidden>C</span>
-          <Markdown text={summary} suggestionBase={null} />
+          <div>
+            {summaries.length > 1 && <div className="muted">Review #{id}</div>}
+            <Markdown text={summary} suggestionBase={null} />
+          </div>
         </div>
-      )}
+      ))}
       <div className="your-turn-actions">
-        <button className="btn btn-small btn-primary" onClick={() => { void setScope({ kind: 'since_review', review_id: id }); setPanel('threads'); dismissCompleted(); }}>
-          Show changes since review #{id}
+        <button className="btn btn-small btn-primary" onClick={() => { void setScope({ kind: 'since_review', review_id: first }); setPanel('threads'); dismissCompleted(); }}>
+          Show changes since review #{first}
         </button>
         <button className="btn btn-small" onClick={() => setPanel('threads')}>Open conversations</button>
       </div>
@@ -89,11 +100,11 @@ const ICON_YOUR_TURN = ICON.replace(/%3C\/svg%3E$/, "%3Ccircle cx='12.5' cy='12.
 
 /** Show in the browser tab whether Claude is working or it is the user's turn, for when postil is in the background. */
 function useTabStatus() {
-  const completed = useStore((s) => s.completedReview);
+  const completed = useStore((s) => s.completedReviews.length > 0);
   const working = useStore((s) => s.reviews.some((r) => r.status === 'in_progress'));
   const waiting = useStore((s) => s.reviews.some((r) => r.status === 'submitted'));
   const wrap = useWrapUp();
-  const yourTurn = completed !== null && !working && !waiting;
+  const yourTurn = completed && !working && !waiting;
   useEffect(() => {
     document.title = wrap === 'wrapping' ? `Claude is wrapping up… · ${TITLE}`
       : wrap === 'done' ? `✓ Finished, close this tab · ${TITLE}`

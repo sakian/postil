@@ -505,6 +505,29 @@ describe('postil UI', { timeout: 120_000 }, () => {
     await stranger.close();
   });
 
+  it('announces reviews queued back to back as one turn, with every summary', async () => {
+    await agent('POST', '/api/reviews/submit', { body: 'First pass.' });
+    await agent('POST', '/api/reviews/submit', { body: 'One more thing.' });
+    await until(async () => /Waiting for Claude: #2, #3/.test(await page.locator('.claude-status').innerText()), 'both reviews queued');
+
+    // Review #2 carries the comments earlier tests left unsent; Claude answers them all.
+    const { threads } = await agent<{ threads: Array<{ id: number }> }>('GET', '/api/agent/reviews/2');
+    for (const t of threads) await agent('POST', `/api/agent/threads/${t.id}/reply`, { body: 'Done.' });
+    await agent('POST', '/api/agent/reviews/2/complete', { summary: 'Handled the first pass.' });
+    await until(async () => /Waiting for Claude: #3/.test(await page.locator('.claude-status').innerText()), 'review #3 still queued');
+    assert.equal(await page.locator('.banner-your-turn').count(), 0, 'not your turn while review #3 is queued');
+
+    await agent('GET', '/api/agent/reviews/3');
+    await agent('POST', '/api/agent/reviews/3/complete', { summary: 'Handled the one more thing.' });
+    const finished = page.locator('.banner-your-turn', { hasText: 'Claude finished reviews #2 and #3' });
+    await finished.waitFor();
+    await until(async () => /first pass[\s\S]*one more thing/.test(await finished.innerText()), 'both summaries, oldest first');
+    assert.match(await page.locator('.claude-status').innerText(), /Your turn: Claude finished #2, #3/);
+    assert.equal(await finished.getByRole('button', { name: 'Show changes since review #2' }).count(), 1, 'changes since the oldest unseen review');
+    await finished.getByTitle('Dismiss').click();
+    await until(async () => (await finished.count()) === 0, 'the banner to go');
+  });
+
   it('raised no errors in the page', () => {
     assert.deepEqual(pageErrors, []);
   });

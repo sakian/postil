@@ -24,12 +24,12 @@ const FILTERS: Array<[Filter, string, (t: ThreadView) => boolean]> = [
 function ThreadsPanel() {
   const threads = useStore((s) => s.threads);
   const resolved = useStore((s) => s.resolved);
-  const completed = useStore((s) => s.completedReview);
+  const completed = useStore((s) => s.completedReviews.length);
   const latest = useStore((s) => s.reviews.filter((r) => r.status === 'addressed').reduce<ReviewView | null>((a, r) => (a && a.id > r.id ? a : r), null));
   // Claude's replies are what the user comes here for, once there are any.
   const [filter, setFilter] = useState<Filter>(() => (threads.some(isYourTurn) ? 'yours' : 'open'));
   useEffect(() => {
-    if (completed !== null) setFilter('yours');
+    if (completed > 0) setFilter('yours');
   }, [completed]);
   const { focus } = useStore.getState();
 

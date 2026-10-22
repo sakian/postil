@@ -429,6 +429,7 @@ li + li { margin-top: 2px; }
 .history-item { border: 1px solid var(--border); border-radius: var(--radius); padding: 8px 10px; margin-bottom: 8px; }
 .history-head { display: flex; gap: 8px; align-items: center; font-size: 13px; }
 .history-summary { display: flex; gap: 8px; align-items: flex-start; margin-top: 6px; padding-top: 6px; border-top: 1px dashed var(--border-muted); }
+.history-summary > div { min-width: 0; }
 .panel-summary { padding: 8px 0; }
 .panel-summary .history-summary { border-top: none; }
 

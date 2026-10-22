@@ -3,7 +3,7 @@ import type {
   AnchoredSectionMark, BaseInfo, CommitsInfo, FileChange, FinishOptions, HistoryInfo, Preferences, FileDiff, Health, ResolvedDiff, ReviewView, Scope, Side, ThreadView,
 } from '../../src/core/api-types.ts';
 import { api, ApiError } from './api.ts';
-import { diffKey, markKey, sidePath, viewedBlob } from './format.ts';
+import { diffKey, isActive, markKey, reviewList, sidePath, viewedBlob } from './format.ts';
 import { highlight, MAX_HIGHLIGHT_LINES, type Token } from './highlight/index.tsx';
 import { withExpanded } from './lib/expanded.ts';
 import { add, removeOverlapping, type Range } from './lib/ranges.ts';
@@ -105,8 +105,8 @@ interface State {
    */
   revealPath: { path: string; n: number; anchor?: string } | null;
   toasts: Toast[];
-  /** A review Claude just finished, offered as "show what changed" until dismissed. */
-  completedReview: number | null;
+  /** Reviews Claude finished since the user last looked, oldest first, offered as "show what changed" until dismissed. */
+  completedReviews: number[];
   /** The user ended the review session: everything resolved and archived. */
   sessionFinished: boolean;
   /** How many Claude sessions were listening when the user finished; they drop off as they wrap up. */
@@ -320,7 +320,7 @@ export const useStore = create<Store>()((set, get) => {
     focusThread: null,
     revealPath: null,
     toasts: [],
-    completedReview: null,
+    completedReviews: [],
     sessionFinished: false,
     listeningAtFinish: 0,
     finishChoices: { commit: true, push: false, message: '' },
@@ -790,7 +790,7 @@ export const useStore = create<Store>()((set, get) => {
     async submit(body) {
       try {
         const review = await api.submit(body);
-        set({ panel: null, completedReview: null });
+        set({ panel: null, completedReviews: [] });
         get().toast(`Review #${review.id} submitted. Claude will pick it up.`);
         await Promise.all([get().refreshThreads(), get().refreshReviews()]);
       } catch (e) {
@@ -810,7 +810,7 @@ export const useStore = create<Store>()((set, get) => {
     async finishSession(opts) {
       try {
         await api.finishSession(opts);
-        set({ sessionFinished: true, listeningAtFinish: get().listening, panel: null, completedReview: null });
+        set({ sessionFinished: true, listeningAtFinish: get().listening, panel: null, completedReviews: [] });
         startFresh();
         await Promise.all([get().refreshThreads(), get().refreshReviews()]);
       } catch (e) {
@@ -821,7 +821,7 @@ export const useStore = create<Store>()((set, get) => {
     async resetReviews() {
       try {
         const r = await api.reset();
-        set({ sessionFinished: false, completedReview: null });
+        set({ sessionFinished: false, completedReviews: [] });
         get().toast(`Started over: archived ${r.threads} conversation${r.threads === 1 ? '' : 's'} and ${r.reviews} review${r.reviews === 1 ? '' : 's'}.`);
         await Promise.all([get().refreshThreads(), get().refreshReviews(), get().refreshMarks(), get().refreshSections()]);
       } catch (e) {
@@ -834,7 +834,7 @@ export const useStore = create<Store>()((set, get) => {
     },
 
     dismissCompleted() {
-      set({ completedReview: null });
+      set({ completedReviews: [] });
     },
 
     setPanel(panel) {
@@ -883,15 +883,23 @@ export const useStore = create<Store>()((set, get) => {
           void s.refreshThreads();
           break;
         case 'review.submitted':
+          // A new review moves on from the ones Claude already finished.
+          set({ completedReviews: [] });
+          void s.refreshReviews();
+          void s.refreshThreads();
+          break;
         case 'review.started':
           void s.refreshReviews();
           void s.refreshThreads();
           break;
         case 'review.completed': {
-          void s.refreshReviews();
+          const id = Number(e.review_id);
+          set({ completedReviews: [...s.completedReviews.filter((r) => r !== id), id].sort((a, b) => a - b) });
           void s.refreshThreads();
-          set({ completedReview: Number(e.review_id) });
-          notifyYourTurn(Number(e.review_id));
+          // Notify once Claude has nothing else queued, so a batch of reviews ends in one "your turn".
+          void s.refreshReviews().then(() => {
+            if (!get().reviews.some(isActive)) notifyYourTurn(get().completedReviews);
+          });
           break;
         }
         case 'preferences.changed':
@@ -906,7 +914,7 @@ export const useStore = create<Store>()((set, get) => {
           void s.refreshReviews();
           break;
         case 'session.reset':
-          set({ sessionFinished: false, completedReview: null });
+          set({ sessionFinished: false, completedReviews: [] });
           void s.refreshThreads();
           void s.refreshReviews();
           break;
@@ -944,9 +952,9 @@ export function askToNotify(): void {
 }
 
 /** Tell a user who is looking at another window that Claude is done and it is their turn. */
-function notifyYourTurn(id: number): void {
-  if (!document.hidden || typeof Notification === 'undefined' || Notification.permission !== 'granted') return;
-  const n = new Notification('postil: your turn', { body: `Claude finished review #${id}.`, tag: 'postil-your-turn' });
+function notifyYourTurn(ids: number[]): void {
+  if (!ids.length || !document.hidden || typeof Notification === 'undefined' || Notification.permission !== 'granted') return;
+  const n = new Notification('postil: your turn', { body: `Claude finished ${reviewList(ids)}.`, tag: 'postil-your-turn' });
   n.onclick = () => {
     window.focus();
     n.close();
