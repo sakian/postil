@@ -19,7 +19,7 @@ export { agentHint } from './hints.ts';
 import { HttpError } from './util.ts';
 
 import type {
-  AgentReview, AgentThread, AppliedSuggestion, AttachmentView, BaseConfig, BaseInfo, BranchesInfo, CommentView, FinishOptions, Preferences, CommitsInfo, Endpoint, FileDiff, HistoryInfo, HookStatus,
+  AgentReview, AgentThread, AppliedSuggestion, AttachmentView, BaseConfig, BaseDefault, BaseInfo, BranchesInfo, CommentView, FinishOptions, Preferences, CommitsInfo, Endpoint, FileDiff, HistoryInfo, HookStatus,
   LastSession, ListenResult, NewThreadInput, ResolvedScope, ReviewView, Scope, ThreadView,
 } from './api-types.ts';
 
@@ -55,6 +55,11 @@ export function assertSession(value: string): string {
 
 function short(oid: string | null): string {
   return oid ? oid.slice(0, 7) : 'empty';
+}
+
+/** A base postil chose, as stored: why, for which branch, and when GitHub was last asked. */
+interface ChosenBase extends BaseDefault {
+  checked: number;
 }
 
 // ---------------------------------------------------------------------------- service
@@ -103,34 +108,88 @@ export class Postil {
    * Anywhere else, it is HEAD when postil first ran here, so "all changes" means everything
    * since review began.
    */
-  private async defaultBase(): Promise<BaseConfig> {
+  private async defaultBase(): Promise<{ config: BaseConfig; chosen: ChosenBase }> {
     const [branch, fallback, head] = await Promise.all([
       this.repo.currentBranch(), this.repo.defaultBranch(), this.repo.head(),
     ]);
-    if (!branch || !head || branch === fallback) return { mode: 'commit', commit: head };
+    const checked = Date.now();
+    const start = { config: { mode: 'commit', commit: head } as const, chosen: { branch, why: 'review_start', checked } as const };
+    if (!branch || !head || branch === fallback) return start;
     // GitHub diffs a pull request against the remote branch, and a local copy can be stale or
     // diverged (after a force push), so prefer origin's.
     const prBase = await this.repo.pullRequestBase();
-    const target = (prBase && ((await this.repo.findBranch(`origin/${prBase}`)) ?? (await this.repo.findBranch(prBase)))) ?? fallback;
-    return target && target !== branch ? { mode: 'merge-base', target } : { mode: 'commit', commit: head };
+    const pr = prBase ? (await this.repo.findBranch(`origin/${prBase}`)) ?? (await this.repo.findBranch(prBase)) : null;
+    const target = pr ?? fallback;
+    if (!target || target === branch) return start;
+    return { config: { mode: 'merge-base', target }, chosen: { branch, why: pr ? 'pull_request' : 'default_branch', checked } };
   }
 
   private async ensureBase(): Promise<void> {
-    if (this.store.getSetting('base') === null) await this.saveBase(await this.defaultBase());
+    if (this.store.getSetting('base') === null) await this.useDefaultBase();
   }
 
-  /** Store the base, pinning a fixed commit so a rebase or gc cannot take it away. */
-  private async saveBase(config: BaseConfig): Promise<void> {
+  private async useDefaultBase(): Promise<void> {
+    const { config, chosen } = await this.defaultBase();
+    await this.saveBase(config, chosen);
+  }
+
+  /**
+   * Store the base, pinning a fixed commit so a rebase or gc cannot take it away. `chosen` is
+   * set when postil chose it, so it can follow the branch; null when the user did.
+   */
+  private async saveBase(config: BaseConfig, chosen: ChosenBase | null): Promise<void> {
     await this.repo.pinBase(config.mode === 'commit' ? config.commit : null);
     this.store.setSetting('base', JSON.stringify(config));
+    this.store.setSetting('base_default', chosen ? JSON.stringify(chosen) : '');
   }
 
   private baseConfig(): BaseConfig {
     return JSON.parse(this.store.getSetting('base') ?? '{"mode":"commit","commit":null}') as BaseConfig;
   }
 
+  /** How postil chose the base, or null when the user chose it (or chose it before postil kept track). */
+  private chosenBase(): ChosenBase | null {
+    const value = this.store.getSetting('base_default');
+    return value ? (JSON.parse(value) as ChosenBase) : null;
+  }
+
+  /** How long a feature branch goes without asking GitHub again whether it has a pull request. */
+  pullRequestTtl = 60_000;
+  private following: Promise<void> | null = null;
+
+  /**
+   * Keep a base postil chose in step with the branch: work it out again on another branch and,
+   * when `recheck` is set, on a feature branch whose pull request may have been opened or
+   * retargeted since. A pull request's base is never given up for the default branch on a
+   * recheck, since gh failing (offline, signed out) looks the same as there being none.
+   */
+  async followBase(recheck = false): Promise<void> {
+    const chosen = this.chosenBase();
+    if (!chosen) return;
+    const branch = await this.repo.currentBranch();
+    const moved = branch !== chosen.branch;
+    if (!moved && !(recheck && chosen.why !== 'review_start' && Date.now() - chosen.checked >= this.pullRequestTtl)) return;
+    this.following ??= (async () => {
+      const before = this.store.getSetting('base');
+      const next = await this.defaultBase();
+      if (!moved && chosen.why === 'pull_request' && next.chosen.why !== 'pull_request') {
+        this.store.setSetting('base_default', JSON.stringify({ ...chosen, checked: next.chosen.checked }));
+        return;
+      }
+      await this.saveBase(next.config, next.chosen);
+      if (this.store.getSetting('base') !== before) this.bus.emit({ type: 'base.changed' });
+    })().finally(() => { this.following = null; });
+    await this.following;
+  }
+
   async base(): Promise<BaseInfo> {
-    const config = this.baseConfig();
+    await this.followBase();
+    const info = await this.resolveBase(this.baseConfig());
+    const chosen = this.chosenBase();
+    return chosen ? { ...info, default: { branch: chosen.branch, why: chosen.why } } : info;
+  }
+
+  private async resolveBase(config: BaseConfig): Promise<BaseInfo> {
     const emptyTree = await this.repo.emptyTree();
     if (config.mode === 'commit') {
       if (config.commit === null) return { config, commit: null, tree: emptyTree, label: 'empty tree' };
@@ -162,12 +221,14 @@ export class Postil {
   /** Measure "all changes" from a commit, or from nothing (null), which reviews every file in the tree. */
   async setBase(rev: string | null): Promise<BaseInfo> {
     const commit = rev === null ? null : await this.repo.resolveCommit(rev);
-    await this.saveBase({ mode: 'commit', commit });
+    await this.saveBase({ mode: 'commit', commit }, null);
     this.bus.emit({ type: 'base.changed' });
     return this.base();
   }
 
+  /** The branches to pick from. Asking for them also checks, in the background, for a new pull request base. */
   async branches(): Promise<BranchesInfo> {
+    void this.followBase(true).catch(() => undefined);
     const [{ local, remote }, current] = await Promise.all([this.repo.branches(), this.repo.currentBranch()]);
     return { branches: local.filter((b) => b !== current), remote, current };
   }
@@ -176,13 +237,13 @@ export class Postil {
   async setBaseBranch(name: string): Promise<BaseInfo> {
     const target = await this.repo.findBranch(name);
     if (!target) throw new HttpError(404, `no branch named ${JSON.stringify(name)}`, 'unknown_branch');
-    await this.saveBase({ mode: 'merge-base', target });
+    await this.saveBase({ mode: 'merge-base', target }, null);
     this.bus.emit({ type: 'base.changed' });
     return this.base();
   }
 
   async resetBase(): Promise<BaseInfo> {
-    await this.saveBase(await this.defaultBase());
+    await this.useDefaultBase();
     this.bus.emit({ type: 'base.changed' });
     return this.base();
   }

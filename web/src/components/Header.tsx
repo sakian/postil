@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import type { Scope } from '../../../src/core/api-types.ts';
+import type { BaseInfo, Scope } from '../../../src/core/api-types.ts';
 import { api } from '../api.ts';
 import { basename, isYourTurn, relativeTime, shortSha } from '../format.ts';
 import { useStore } from '../store.ts';
@@ -67,6 +67,14 @@ function ScopePicker() {
 const DEFAULT_BASE = ' default';
 const FIXED_BASE = ' fixed';
 
+/** "default", and while it is in use, what it stands for. */
+function defaultLabel(base: BaseInfo): string {
+  if (!base.default) return 'default';
+  if (base.default.why === 'review_start') return `default: where review began${base.commit ? ` (${shortSha(base.commit)})` : ''}`;
+  const target = base.config.mode === 'merge-base' ? base.config.target : '';
+  return base.default.why === 'pull_request' ? `default: ${target} (pull request base)` : `default: ${target}`;
+}
+
 /** The branch "all changes" is measured from: a fallback for when the default guessed wrong. */
 function BasePicker() {
   const base = useStore((s) => s.base);
@@ -76,9 +84,9 @@ function BasePicker() {
   useEffect(load, []);
   if (!base) return null;
 
-  const current = base.config.mode === 'merge-base' ? base.config.target : FIXED_BASE;
+  const current = base.default ? DEFAULT_BASE : base.config.mode === 'merge-base' ? base.config.target : FIXED_BASE;
   // The branch in use stays selectable even when the list has not loaded it.
-  const missing = current !== FIXED_BASE && !branches.local.includes(current) && !branches.remote.includes(current);
+  const missing = current !== FIXED_BASE && current !== DEFAULT_BASE && !branches.local.includes(current) && !branches.remote.includes(current);
   const onChange = (value: string) => {
     if (value !== FIXED_BASE) void setBaseBranch(value === DEFAULT_BASE ? null : value);
   };
@@ -87,7 +95,7 @@ function BasePicker() {
     <label className="base-picker" title={`Measured from the ${base.label}${base.warning ? ` (${base.warning})` : ''}`}>
       <span className="muted">compared to</span>
       <select value={current} onChange={(e) => onChange(e.target.value)} onFocus={load}>
-        <option value={DEFAULT_BASE}>default</option>
+        <option value={DEFAULT_BASE}>{defaultLabel(base)}</option>
         {current === FIXED_BASE && <option value={FIXED_BASE}>{base.commit ? `commit ${shortSha(base.commit)}` : 'nothing (every file)'}</option>}
         {missing && <option value={current}>{current}</option>}
         {branches.local.length > 0 && (
