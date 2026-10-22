@@ -97,15 +97,15 @@ function BasePicker() {
 function ClaudeStatus() {
   const reviews = useStore((s) => s.reviews);
   const listening = useStore((s) => s.listening);
-  const completed = useStore((s) => s.completedReview);
+  const completed = useStore((s) => s.completedReviews);
   const number = useStore((s) => s.draftNumber);
   const { setPanel } = useStore.getState();
   const working = reviews.find((r) => r.status === 'in_progress');
   const waiting = reviews.filter((r) => r.status === 'submitted');
-  if (completed !== null && !working && !waiting.length) {
+  if (completed.length && !working && !waiting.length) {
     return (
       <button className="claude-status your-turn" title="Claude is done with your review. Open its replies." onClick={() => setPanel('threads')}>
-        <span className="dot" /> Your turn: Claude finished #{completed}
+        <span className="dot" /> Your turn: Claude finished {completed.map((id) => `#${id}`).join(', ')}
       </button>
     );
   }
