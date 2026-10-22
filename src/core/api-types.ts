@@ -27,7 +27,10 @@ export interface BaseInfo {
 
 /** Branches the base can follow: local and remote-tracking, newest first, without the current branch. */
 export interface BranchesInfo {
+  /** Local branches, in name order. */
   branches: string[];
+  /** Remote-tracking branches, such as origin/main, in name order. */
+  remote: string[];
   current: string | null;
 }
 

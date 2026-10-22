@@ -168,8 +168,8 @@ export class Postil {
   }
 
   async branches(): Promise<BranchesInfo> {
-    const [branches, current] = await Promise.all([this.repo.branches(), this.repo.currentBranch()]);
-    return { branches: branches.filter((b) => b !== current), current };
+    const [{ local, remote }, current] = await Promise.all([this.repo.branches(), this.repo.currentBranch()]);
+    return { branches: local.filter((b) => b !== current), remote, current };
   }
 
   /** Measure "all changes" from the merge base with a branch, following it as it moves, as a pull request does. */

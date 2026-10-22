@@ -88,7 +88,7 @@ describe('base selection', () => {
       fx.write('c', 'feature\n');
       fx.commit('feature work');
       const postil = await Postil.open(fx.dir);
-      assert.deepEqual((await postil.branches()).branches.sort(), ['develop', 'main'], 'every branch but the current one');
+      assert.deepEqual((await postil.branches()).branches, ['develop', 'main'], 'every branch but the current one, in name order');
 
       let base = await postil.setBaseBranch('develop');
       assert.deepEqual(base.config, { mode: 'merge-base', target: 'develop' });

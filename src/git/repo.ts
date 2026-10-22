@@ -194,15 +194,23 @@ export class Repo {
     return null;
   }
 
-  /** Local and remote-tracking branches, most recently committed first, without symbolic refs like origin/HEAD. */
-  async branches(limit = 200): Promise<string[]> {
+  /**
+   * Local and remote-tracking branches, each in name order, without symbolic refs like
+   * origin/HEAD. The most recently committed `limit` are kept when there are more.
+   */
+  async branches(limit = 200): Promise<{ local: string[]; remote: string[] }> {
     const text = await gitText(this.root, [
-      'for-each-ref', '--sort=-committerdate', `--count=${limit}`, '--format=%(refname:short)%09%(symref)', 'refs/heads', 'refs/remotes',
+      'for-each-ref', '--sort=-committerdate', `--count=${limit}`, '--format=%(refname)%09%(refname:short)%09%(symref)', 'refs/heads', 'refs/remotes',
     ]);
-    return text.split('\n').flatMap((line) => {
-      const [name, symref] = line.split('\t');
-      return name && !symref ? [name] : [];
-    });
+    const local: string[] = [];
+    const remote: string[] = [];
+    for (const line of text.split('\n')) {
+      const [ref, name, symref] = line.split('\t');
+      if (!ref || !name || symref) continue;
+      (ref.startsWith('refs/heads/') ? local : remote).push(name);
+    }
+    const byName = (a: string, b: string) => a.localeCompare(b, undefined, { sensitivity: 'base', numeric: true });
+    return { local: local.sort(byName), remote: remote.sort(byName) };
   }
 
   /**

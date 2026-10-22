@@ -71,13 +71,14 @@ const FIXED_BASE = ' fixed';
 function BasePicker() {
   const base = useStore((s) => s.base);
   const { setBaseBranch } = useStore.getState();
-  const [branches, setBranches] = useState<string[]>([]);
-  const load = () => void api.branches().then((b) => setBranches(b.branches), () => {});
+  const [branches, setBranches] = useState<{ local: string[]; remote: string[] }>({ local: [], remote: [] });
+  const load = () => void api.branches().then((b) => setBranches({ local: b.branches, remote: b.remote }), () => {});
   useEffect(load, []);
   if (!base) return null;
 
   const current = base.config.mode === 'merge-base' ? base.config.target : FIXED_BASE;
-  const names = current !== FIXED_BASE && !branches.includes(current) ? [current, ...branches] : branches;
+  // The branch in use stays selectable even when the list has not loaded it.
+  const missing = current !== FIXED_BASE && !branches.local.includes(current) && !branches.remote.includes(current);
   const onChange = (value: string) => {
     if (value !== FIXED_BASE) void setBaseBranch(value === DEFAULT_BASE ? null : value);
   };
@@ -88,7 +89,13 @@ function BasePicker() {
       <select value={current} onChange={(e) => onChange(e.target.value)} onFocus={load}>
         <option value={DEFAULT_BASE}>default</option>
         {current === FIXED_BASE && <option value={FIXED_BASE}>{base.commit ? `commit ${shortSha(base.commit)}` : 'nothing (every file)'}</option>}
-        {names.map((b) => <option key={b} value={b}>{b}</option>)}
+        {missing && <option value={current}>{current}</option>}
+        {branches.local.length > 0 && (
+          <optgroup label="Local">{branches.local.map((b) => <option key={b} value={b}>{b}</option>)}</optgroup>
+        )}
+        {branches.remote.length > 0 && (
+          <optgroup label="Remote">{branches.remote.map((b) => <option key={b} value={b}>{b}</option>)}</optgroup>
+        )}
       </select>
     </label>
   );
