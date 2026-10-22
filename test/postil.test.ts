@@ -76,6 +76,55 @@ describe('base selection', () => {
     }
   });
 
+  it('keeps a default base in step with the branch and its pull request, until the user picks one', async () => {
+    const fx = makeFixture();
+    try {
+      fx.write('a', '1\n');
+      fx.commit('root');
+      fx.git('branch', 'develop');
+      fx.git('switch', '-q', '-c', 'feature');
+      fx.write('a', '2\n');
+      fx.commit('feature');
+      const postil = await Postil.open(fx.dir);
+      postil.pullRequestTtl = 0;
+      let prBase: string | null = null;
+      postil.repo.pullRequestBase = async () => prBase;
+      let changes = 0;
+      postil.bus.subscribe((e) => { if (e.type === 'base.changed') changes++; });
+
+      let base = await postil.base();
+      assert.deepEqual([base.config, base.default?.why], [{ mode: 'merge-base', target: 'main' }, 'default_branch']);
+
+      // The pull request is opened, into develop, after review began.
+      prBase = 'develop';
+      await postil.followBase(true);
+      base = await postil.base();
+      assert.deepEqual([base.config, base.default], [{ mode: 'merge-base', target: 'develop' }, { branch: 'feature', why: 'pull_request' }]);
+      assert.equal(changes, 1, 'the UI is told');
+
+      // gh failing looks like no pull request: keep the one found.
+      prBase = null;
+      await postil.followBase(true);
+      assert.deepEqual((await postil.base()).config, { mode: 'merge-base', target: 'develop' });
+
+      // On another branch, the default is worked out for that branch.
+      fx.git('switch', '-q', '-c', 'other', 'main');
+      base = await postil.base();
+      assert.deepEqual([base.config, base.default?.branch], [{ mode: 'merge-base', target: 'main' }, 'other']);
+
+      // A base the user picked stays put.
+      base = await postil.setBaseBranch('develop');
+      assert.equal(base.default, undefined);
+      fx.git('switch', '-q', 'feature');
+      assert.deepEqual((await postil.base()).config, { mode: 'merge-base', target: 'develop' });
+      base = await postil.resetBase();
+      assert.deepEqual([base.config.mode, base.default?.branch], ['merge-base', 'feature'], 'until "default" is picked again');
+      postil.close();
+    } finally {
+      fx.cleanup();
+    }
+  });
+
   it('measures a stacked branch from the branch it targets, following that branch as it moves', async () => {
     const fx = makeFixture();
     try {

@@ -23,6 +23,18 @@ export interface BaseInfo {
   label: string;
   /** Set when the configured base could not be resolved and the empty tree was used instead. */
   warning?: string;
+  /** Set while postil chooses the base itself, following the branch; gone once the user picks one. */
+  default?: BaseDefault;
+}
+
+/**
+ * Why postil chose the base: the branch's pull request targets it, the repository's default
+ * branch (no pull request found), or HEAD when review began (on the default branch itself).
+ */
+export interface BaseDefault {
+  /** The branch the default was worked out for. */
+  branch: string | null;
+  why: 'pull_request' | 'default_branch' | 'review_start';
 }
 
 /** Branches the base can follow: local and remote-tracking, newest first, without the current branch. */
