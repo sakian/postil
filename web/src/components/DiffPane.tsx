@@ -132,6 +132,10 @@ function FileView({ file, threads }: { file: FileChange; threads: ThreadView[] }
   // Same content both sides (a pure rename or mode change): nothing to fetch.
   const sameContent = file.old_blob !== null && file.old_blob === file.new_blob;
   const loadable = file.kind !== 'submodule' && !deferred && !sameContent && showingText;
+  // Still waiting on its diff, so about to change height. Such a file is never the browser's
+  // scroll anchor: the anchor falls to the content below it, which then stays where it is on
+  // screen when this file loads, rather than being pushed down by it.
+  const pending = loadable && !folded && (!diff || diff.state === 'loading');
   useEffect(() => {
     if (!(nearViewport && !folded && loadable)) return;
     void loadDiff(file);
@@ -209,7 +213,7 @@ function FileView({ file, threads }: { file: FileChange; threads: ThreadView[] }
   }
 
   return (
-    <section ref={ref} id={fileAnchor(file.path)} data-path={file.path} className={`file${viewed ? ' is-viewed' : ''}`}>
+    <section ref={ref} id={fileAnchor(file.path)} data-path={file.path} className={`file${viewed ? ' is-viewed' : ''}${pending ? ' is-pending' : ''}`}>
       <header className="file-header">
         <button className="icon-btn" data-action="fold" onClick={() => setFold(file.path, !folded)} title={folded ? 'Show file (f)' : 'Hide file (f)'} aria-expanded={!folded}>
           <Icon name={folded ? 'chevronRight' : 'chevronDown'} />
@@ -283,6 +287,20 @@ function FileView({ file, threads }: { file: FileChange; threads: ThreadView[] }
     </section>
   );
 }
+
+/** A file whose diff is fetched ahead of time, without being asked for. */
+function prefetchable(f: FileChange): boolean {
+  const lines = (f.additions ?? 0) + (f.deletions ?? 0);
+  const sameContent = f.old_blob !== null && f.old_blob === f.new_blob;
+  return f.kind === 'text' && !SVG.test(f.path) && lines <= LARGE_DIFF_LINES && !sameContent;
+}
+
+/** How soon after the page opens prefetching starts, leaving the files on screen to load first. */
+const PREFETCH_DELAY = 800;
+/** Diffs fetched at once while prefetching. */
+const PREFETCH_CONCURRENCY = 3;
+/** Changed lines prefetched in all, so a huge review does not hold every diff in memory. */
+const PREFETCH_BUDGET = 60_000;
 
 /** Reviews longer than this render only the files near the viewport. */
 const VIRTUAL_THRESHOLD = 150;
@@ -410,6 +428,30 @@ function FileList({ files, byFile }: { files: FileChange[]; byFile: Map<string, 
     listRef.current?.querySelectorAll('section.file').forEach((el) => ro.observe(el));
     return () => { cancelAnimationFrame(frame); ro.disconnect(); };
   }, [virtual, range, files, compute, hold]);
+
+  // Fetch the remaining diffs in the background, in page order, so a file picked from the
+  // sidebar is ready when the page gets there. Viewed (folded) files are left until opened.
+  useEffect(() => {
+    let stopped = false;
+    const queue: FileChange[] = [];
+    let budget = PREFETCH_BUDGET;
+    const { viewed: seen, fileFold } = useStore.getState();
+    for (const f of files) {
+      if (!prefetchable(f)) continue;
+      const b = viewedBlob(f);
+      if (fileFold[f.path] ?? (b !== null && seen.has(markKey(f.path, b)))) continue;
+      budget -= (f.additions ?? 0) + (f.deletions ?? 0);
+      if (budget < 0) break;
+      queue.push(f);
+    }
+    const worker = async () => {
+      for (let f = queue.shift(); f && !stopped; f = queue.shift()) await useStore.getState().loadDiff(f);
+    };
+    const timer = setTimeout(() => {
+      for (let i = 0; i < PREFETCH_CONCURRENCY; i++) void worker();
+    }, PREFETCH_DELAY);
+    return () => { stopped = true; clearTimeout(timer); };
+  }, [files]);
 
   // Scroll a file into view on request, jumping to its computed offset if it is not mounted.
   useEffect(() => {

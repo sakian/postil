@@ -224,6 +224,7 @@ code, pre { font-family: var(--mono); }
 .empty { padding: 40px; text-align: center; }
 
 .file { border: 1px solid var(--border); border-radius: var(--radius); margin-bottom: 16px; }
+.file.is-pending { overflow-anchor: none; }
 .file-header {
   display: flex; align-items: center; gap: 8px; padding: 6px 10px 6px 4px; background: var(--bg-subtle);
   border-bottom: 1px solid var(--border); border-radius: var(--radius) var(--radius) 0 0; position: sticky; top: -16px; z-index: 2;

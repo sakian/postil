@@ -249,6 +249,15 @@ describe('postil UI', { timeout: 120_000 }, () => {
     assert.equal(await page.locator('.tree-file.is-viewed').count(), 1);
   });
 
+  it('opens a folded file picked from the sidebar', async () => {
+    const readme = file('README.md');
+    await page.locator('.tree-file', { hasText: 'README.md' }).click();
+    await until(async () => (await readme.locator('.file-body').count()) === 1, 'README to unfold');
+    assert.ok(await readme.getByLabel('Viewed').isChecked(), 'still marked viewed');
+    await readme.locator('[data-action="fold"]').click();
+    await until(async () => (await readme.locator('.file-body').count()) === 0, 'README to fold again');
+  });
+
   it('collapses and expands every folder in the tree', async () => {
     const rowsBefore = await page.locator('.tree-row').count();
     await page.getByTitle('Collapse all folders').click();
