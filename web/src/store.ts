@@ -846,7 +846,11 @@ export const useStore = create<Store>()((set, get) => {
     },
 
     revealFile(path, anchor) {
-      set((s) => ({ revealPath: { path, n: (s.revealPath?.n ?? 0) + 1, ...(anchor && { anchor }) } }));
+      // A file brought into view is opened, even one folded by hand or by marking it viewed.
+      set((s) => ({
+        revealPath: { path, n: (s.revealPath?.n ?? 0) + 1, ...(anchor && { anchor }) },
+        fileFold: { ...s.fileFold, [path]: false },
+      }));
     },
 
     toast(text, action) {
