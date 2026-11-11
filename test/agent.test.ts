@@ -1,6 +1,6 @@
 import { strict as assert } from 'node:assert';
 import { spawn, spawnSync } from 'node:child_process';
-import { existsSync, lstatSync, mkdtempSync, readFileSync, readlinkSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, lstatSync, mkdtempSync, readFileSync, readlinkSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -383,5 +383,85 @@ describe('several repositories at once', () => {
       a.cleanup();
       b.cleanup();
     }
+  });
+});
+
+describe('a session that starts outside a git working tree', () => {
+  // Like a folder holding a bare clone and its worktrees as subfolders: Claude starts in the
+  // folder, which isn't a git working tree, so connect has to be told which worktree to use.
+  let fx: Fixture;
+  let parent: string;
+  let worktree: string;
+  let server: RunningServer;
+  let mcp: Client;
+
+  before(async () => {
+    fx = makeFixture();
+    fx.write('f.txt', numbered(5));
+    fx.commit('base');
+    parent = realpathSync.native(mkdtempSync(join(tmpdir(), 'postil-worktrees-')));
+    worktree = join(parent, 'feature');
+    fx.git('clone', '-q', '--bare', fx.dir, join(parent, 'repo.git'));
+    fx.git('--git-dir', join(parent, 'repo.git'), 'worktree', 'add', '-q', '-b', 'feature', worktree, 'main');
+    writeFileSync(join(worktree, 'f.txt'), numbered(5, { 2: 'two' }));
+    server = await startServer({ cwd: worktree, port: 0 });
+    mcp = new Client({ name: 'test', version: '0' });
+    await mcp.connect(new StdioClientTransport({
+      command: process.execPath, args: [MAIN, 'mcp'], cwd: parent,
+      env: { ...process.env as Record<string, string>, CLAUDE_PROJECT_DIR: parent, CLAUDE_CODE_SESSION_ID: SESSION },
+      stderr: 'pipe',
+    }));
+  });
+  after(async () => {
+    await mcp?.close();
+    await server?.close();
+    fx?.cleanup();
+    if (parent) rmSync(parent, { recursive: true, force: true });
+  });
+
+  it('tells Claude to call connect with a path before one is chosen', async () => {
+    for (const name of ['list_pending', 'get_review']) {
+      const r = (await mcp.callTool({ name, arguments: name === 'get_review' ? { review_id: 1 } : {} })) as ToolText;
+      assert.equal(r.isError, true, name);
+      assert.match(textOf(r), /not inside a git working tree/, name);
+      assert.match(textOf(r), /Call connect with path set to the repository or worktree/, name);
+    }
+  });
+
+  it('refuses a path that is not inside a git working tree', async () => {
+    const r = (await mcp.callTool({ name: 'connect', arguments: { path: parent } })) as ToolText;
+    assert.equal(r.isError, true);
+    assert.match(textOf(r), /not inside a git working tree/);
+  });
+
+  it('connect with a path relative to the session folder listens on that worktree', async () => {
+    const out = textOf(await mcp.callTool({ name: 'connect', arguments: { path: 'feature' } }));
+    assert.ok(out.includes(`ws://127.0.0.1:${server.info.port}/events?channel=agent&session=${SESSION}&token=`), out);
+    assert.ok(out.includes(`postil is running for ${worktree}.`), out);
+    assert.equal(server.postil.store.isListener(SESSION), true);
+  });
+
+  it('later tools fetch and reply to a review in that worktree', async () => {
+    const scope = await server.postil.resolveScope({ kind: 'all' });
+    const thread = await server.postil.createThread({
+      from_tree: scope.from.tree, to_tree: scope.to.tree, path: 'f.txt', side: 'new', start_line: 2, body: 'Why two?',
+    });
+    const review = await server.postil.submitReview();
+
+    assert.match(textOf(await mcp.callTool({ name: 'list_pending', arguments: {} })), new RegExp(`#${review.id}`));
+    const fetched = textOf(await mcp.callTool({ name: 'get_review', arguments: { review_id: review.id } }));
+    assert.ok(fetched.includes(`## Thread ${thread.id}: f.txt, line 2 [NEEDS YOUR REPLY]`), fetched);
+    assert.match(fetched, /Why two\?/);
+
+    assert.match(textOf(await mcp.callTool({ name: 'reply', arguments: { thread_id: thread.id, body: 'It was asked for.' } })), /Replied to thread/);
+    assert.ok(server.postil.thread(thread.id).comments.some((c) => c.author === 'claude' && c.body === 'It was asked for.'));
+    assert.match(textOf(await mcp.callTool({ name: 'complete_review', arguments: { review_id: review.id, summary: 'Answered.' } })), /is complete/);
+    assert.equal(server.postil.review(review.id).status, 'addressed');
+  });
+
+  it('re-arming with start=false and no path keeps using the chosen worktree', async () => {
+    const r = (await mcp.callTool({ name: 'connect', arguments: { start: false } })) as ToolText;
+    assert.notEqual(r.isError, true, textOf(r));
+    assert.ok(textOf(r).includes(`ws://127.0.0.1:${server.info.port}/events?`), textOf(r));
   });
 });

@@ -57,6 +57,16 @@ export interface BlobInfo {
   binary: boolean;
 }
 
+/** The directory isn't inside a git working tree (e.g. a folder holding a bare clone and its worktrees). */
+export class NotARepoError extends Error {
+  readonly dir: string;
+
+  constructor(dir: string) {
+    super(`not inside a git working tree: ${dir}`);
+    this.dir = dir;
+  }
+}
+
 export class Repo {
   private readonly indexMutex = new Mutex();
   private readonly blobs = new ByteLru<string>(64 * 1024 * 1024, 8 * 1024 * 1024);
@@ -98,7 +108,7 @@ export class Repo {
     try {
       out = await gitText(cwd, ['rev-parse', '--path-format=absolute', '--show-toplevel', '--absolute-git-dir', '--git-common-dir']);
     } catch (e) {
-      if (e instanceof GitError) throw new Error(`not inside a git working tree: ${cwd}`);
+      if (e instanceof GitError) throw new NotARepoError(cwd);
       throw e;
     }
     const [root, gitDir, commonDir] = out.trim().split(/\r?\n/);
