@@ -1,12 +1,12 @@
 import { Fragment, useCallback, useEffect, useMemo, useRef, type MouseEvent, type ReactNode } from 'react';
 import type { FileChange, FileDiff, Side, ThreadView } from '../../../src/core/api-types.ts';
 import { normalize, type Range } from '../lib/ranges.ts';
-import { buildRows, EXPAND_STEP, foldDone, gaps, oldToNewInGaps, toSplit, type Row, type SplitRow } from '../lib/rows.ts';
-import { fileSections, sectionDone, validMarks, type Section } from '../lib/sections.ts';
+import { buildRows, EXPAND_STEP, foldDone, foldRemoved, gaps, oldToNewInGaps, toSplit, type Row, type SplitRow } from '../lib/rows.ts';
+import { fileSections, rewrittenSections, sectionDone, validMarks, type Section } from '../lib/sections.ts';
 import { isSelected, splitSelection, unifiedSelection, type Selection } from '../lib/selection.ts';
 import { currentLines, diffKey, markKey, sidePath, viewedBlob } from '../format.ts';
 import { renderEmphasis, renderTokens, type Token } from '../highlight/index.tsx';
-import { wordHighlights, type Span } from '../lib/worddiff.ts';
+import { wordHighlights, wordPairs, type Span } from '../lib/worddiff.ts';
 import { useStore, type Target } from '../store.ts';
 import { Icon } from './icons.tsx';
 import { NewThreadComposer, ThreadWidget } from './Thread.tsx';
@@ -31,9 +31,10 @@ export function DiffTable({ file, diff, threads }: Props) {
   const composer = useStore((s) => (s.composer?.path === file.path ? s.composer : null));
   const sections = useStore((s) => s.sections);
   const unfoldedDone = useStore((s) => s.unfoldedDone);
+  const shownRemoved = useStore((s) => s.shownRemoved);
   const viewedBlobId = viewedBlob(file);
   const viewed = useStore((s) => (viewedBlobId ? s.viewed.has(markKey(file.path, viewedBlobId)) : false));
-  const { expand, collapse, select, openComposer, loadLines, setSectionsDone, setDoneUnfolded } = useStore.getState();
+  const { expand, collapse, select, openComposer, loadLines, setSectionsDone, setDoneUnfolded, setRemovedShown } = useStore.getState();
   const key = diffKey(file);
 
   // Each run of changed lines is a section the user can mark done. Sections marked done fold to
@@ -89,7 +90,7 @@ export function DiffTable({ file, diff, threads }: Props) {
     }
   }, [blob, diff.new_lines, revealed.length, forced.length, linesState, loadLines]);
 
-  const rows = useMemo(
+  const allRows = useMemo(
     () =>
       foldDone(buildRows(diff, { revealed, forced, newLines }), folded, {
         hunk: (h) => diff.hunks[h]!.lines.filter((l) => l.kind !== 'context').length,
@@ -97,9 +98,31 @@ export function DiffTable({ file, diff, threads }: Props) {
       }),
     [diff, parts, revealed, forced, newLines, folded],
   );
-  const split = useMemo(() => (view === 'split' ? toSplit(rows) : null), [rows, view]);
-  // The words that changed within each removed line and the added line it pairs with.
-  const words = useMemo(() => wordHighlights(rows), [rows]);
+  // Each removed line paired with the added line it was edited into, and the words that changed.
+  const pairs = useMemo(() => wordPairs(allRows), [allRows]);
+  const words = useMemo(() => wordHighlights(pairs), [pairs]);
+
+  // A section that rewrites a block shows only its new code until asked, in the unified view. Its
+  // removed lines stay out while a conversation, the composer or a selection is on them.
+  const rewritten = useMemo(() => rewrittenSections(parts, new Set(pairs.map((p) => p.oldNo))), [parts, pairs]);
+  const removedKey = (section: number) => `${key}#r${section}`;
+  const removedOpen = useMemo(() => {
+    const byUser = new Set<number>();
+    const needed = new Set<number>();
+    for (const i of rewritten.keys()) {
+      const old = parts[i]!.old!;
+      const onIt = (side: Side, n: number | null) => side === 'old' && n !== null && n >= old.start && n <= old.end;
+      if (threads.some((t) => onIt(t.side, currentLines(t).end)) || (composer && onIt(composer.side, composer.end)) ||
+        (selection && onIt(selection.side, selection.end))) needed.add(i);
+      else if (shownRemoved[`${key}#r${i}`]) byUser.add(i);
+    }
+    return { byUser, needed, all: new Set([...byUser, ...needed]) };
+  }, [rewritten, parts, threads, composer, selection, shownRemoved, key]);
+  const rows = useMemo(
+    () => (view === 'split' ? allRows : foldRemoved(allRows, rewritten, removedOpen.all)),
+    [view, allRows, rewritten, removedOpen],
+  );
+  const split = useMemo(() => (view === 'split' ? toSplit(allRows) : null), [allRows, view]);
   const wordsFor = (side: Side, no: number | null): Span[] | undefined => (no === null ? undefined : words.get(`${side}:${no}`));
 
   // Threads and the open composer attach below the last line they cover, per side.
@@ -278,6 +301,30 @@ export function DiffTable({ file, diff, threads }: Props) {
     </tr>
   );
 
+  /** The removed lines of a rewritten section, folded, or the control to fold them again. */
+  const removedRow = (r: Extract<Row, { type: 'removed' }>, first: boolean) => {
+    const lines = `${r.count} removed line${r.count === 1 ? '' : 's'}`;
+    return (
+      <tr key={r.key} className={`removed-row${r.shown ? ' is-shown' : ''}`}>
+        <td colSpan={width}>
+          {sectionControls(r.section, first)}
+          {!r.shown ? (
+            <>
+              <Icon name="expandBoth" size={12} /> {lines} hidden, since this section rewrites them
+              <button className="link-btn" onClick={() => setRemovedShown(removedKey(r.section), true)}>Show</button>
+            </>
+          ) : removedOpen.needed.has(r.section) ? (
+            <span>{lines}, shown while they have a conversation or selection</span>
+          ) : (
+            <button className="collapse-btn" onClick={() => setRemovedShown(removedKey(r.section), false)}>
+              <Icon name="collapse" size={12} /> Hide {lines}
+            </button>
+          )}
+        </td>
+      </tr>
+    );
+  };
+
   const hunkRow = (r: Extract<Row, { type: 'hunk' }>) => (
     <tr key={r.key} className="hunk-row sticky-hunk">
       <td colSpan={view === 'split' ? 1 : 2} />
@@ -301,7 +348,7 @@ export function DiffTable({ file, diff, threads }: Props) {
 
   /** Whether each row starts a section, so its controls go there. */
   const starts = (list: ReadonlyArray<{ type: string; section?: number | null }>) =>
-    list.map((r, i) => (r.type === 'line' || r.type === 'pair') && r.section != null && list[i - 1]?.section !== r.section);
+    list.map((r, i) => (r.type === 'line' || r.type === 'pair' || r.type === 'removed') && r.section != null && list[i - 1]?.section !== r.section);
 
   // -------------------------------------------------------------- unified
   if (!split) {
@@ -315,6 +362,7 @@ export function DiffTable({ file, diff, threads }: Props) {
             if (r.type === 'collapse') return collapseRow(r);
             if (r.type === 'hunk') return hunkRow(r);
             if (r.type === 'done') return doneRow(r);
+            if (r.type === 'removed') return removedRow(r, first[i]!);
             const side: Side = r.kind === 'del' ? 'old' : 'new';
             const no = side === 'old' ? r.oldNo : r.newNo;
             const selected = isSelected(selection, side, no) || (r.kind === 'context' && isSelected(selection, 'old', r.oldNo));
@@ -352,6 +400,7 @@ export function DiffTable({ file, diff, threads }: Props) {
           if (r.type === 'collapse') return collapseRow(r);
           if (r.type === 'hunk') return hunkRow(r);
           if (r.type === 'done') return doneRow(r);
+          if (r.type === 'removed') return removedRow(r, firstPair[i]!);
           const { left, right } = r;
           const selL = left ? isSelected(selection, 'old', left.no) : false;
           const selR = right ? isSelected(selection, 'new', right.no) : false;

@@ -59,6 +59,28 @@ export function fileSections(hunks: readonly Hunk[]): Section[] {
   return out;
 }
 
+/** Removed lines a section needs before its removed lines can fold away as a rewrite. */
+export const REWRITE_MIN_REMOVED = 8;
+
+/**
+ * Sections that replace a block of code with unrelated new code, mapped to their removed line
+ * count. Such a section is read through its added lines, and its removed lines are mostly
+ * noise. A section counts when it removes at least `REWRITE_MIN_REMOVED` lines, adds some, and
+ * fewer than half of its removed lines pair up with an added line they were edited into.
+ */
+export function rewrittenSections(sections: readonly Section[], pairedOld: ReadonlySet<number>): Map<number, number> {
+  const out = new Map<number, number>();
+  for (const s of sections) {
+    if (!s.old || !s.new) continue;
+    const removed = s.old.end - s.old.start + 1;
+    if (removed < REWRITE_MIN_REMOVED) continue;
+    let paired = 0;
+    for (let n = s.old.start; n <= s.old.end; n++) if (pairedOld.has(n)) paired++;
+    if (paired * 2 < removed) out.set(s.index, removed);
+  }
+  return out;
+}
+
 /** The ranges to mark when marking a section done: its removed lines and its added lines. */
 export function sectionRanges(section: Section): Array<{ side: Side; start: number; end: number }> {
   const out: Array<{ side: Side; start: number; end: number }> = [];

@@ -589,3 +589,9 @@ kbd { font: 12px var(--mono); padding: 1px 6px; border: 1px solid var(--border);
 .review-panel .finish-controls .option { margin-top: 0; }
 .option { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; cursor: pointer; user-select: none; }
 .review-panel .option { margin-top: 8px; }
+
+/* The removed lines of a rewritten section, folded so its new code reads on its own. */
+.removed-row td { background: var(--del-bg); color: var(--fg-muted); font: 12px var(--sans); padding: 3px 12px !important; border-top: 1px dashed var(--border); }
+.removed-row .icon { color: var(--del-fg); vertical-align: -2px; }
+.removed-row .link-btn { margin-left: 8px; }
+.removed-row.is-shown td { background: var(--revealed-bg); padding: 1px 4px !important; }

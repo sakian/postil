@@ -1,6 +1,7 @@
 import type {
   AnchoredSectionMark, AppliedSuggestion, AttachmentView, SectionMarkRow, Side, BaseInfo, BranchesInfo, CommitsInfo, FinishOptions, HistoryInfo, Preferences, FileDiff, FileMarkRow, Health, NewThreadInput, ResolvedDiff, ReviewView, Scope, ThreadView,
 } from '../../src/core/api-types.ts';
+import { regroup } from './lib/regroup.ts';
 
 const TOKEN_KEY = 'postil.token';
 
@@ -85,8 +86,11 @@ export const api = {
   setBaseBranch: (branch: string | null) =>
     branch === null ? call<BaseInfo>('POST', '/api/base/reset') : call<BaseInfo>('PUT', '/api/base', { branch }),
   resolve: (scope: Scope) => call<ResolvedDiff>('POST', '/api/diff/resolve', { scope }),
-  fileDiff: (oldBlob: string | null, newBlob: string | null, opts: { force?: boolean; signal?: AbortSignal } = {}) =>
-    call<FileDiff>('GET', `/api/diff/file?${q({ old: oldBlob, new: newBlob, force: opts.force ? '1' : undefined })}`, undefined, opts.signal),
+  /** A file's diff, with rewritten blocks regrouped (see lib/regroup.ts), so every view shows the same lines. */
+  fileDiff: async (oldBlob: string | null, newBlob: string | null, opts: { force?: boolean; signal?: AbortSignal } = {}) => {
+    const diff = await call<FileDiff>('GET', `/api/diff/file?${q({ old: oldBlob, new: newBlob, force: opts.force ? '1' : undefined })}`, undefined, opts.signal);
+    return { ...diff, hunks: regroup(diff.hunks) };
+  },
   /** A URL for an <img>: images cannot send headers, so the token rides in the query. */
   rawUrl: (oid: string, path: string) => `/api/blobs/${oid}/raw?${q({ path, token })}`,
   /** Like `rawUrl`, for the file at `path` in a snapshot tree. */
