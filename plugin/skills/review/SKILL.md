@@ -19,7 +19,10 @@ If the user passed `stop`, see "Stop listening" instead. If they passed `reset`,
 passed `move`, `export` or `import`, see "Move to another computer" instead.
 
 1. Call the postil `connect` tool. It starts the review server for this repository if needed, registers this
-   session, and returns a WebSocket URL and the UI address.
+   session, and returns a WebSocket URL and the UI address. If this session's folder isn't a git working tree,
+   or holds several worktrees (e.g. a bare clone with its worktrees as subfolders), pass `path` set to the
+   worktree you're working in. Ask the user if it isn't clear which one. postil keeps using that worktree for
+   every later tool, so you only pass it once.
 2. Call `open_ui` to open the UI in the user's browser, unless they already have it open.
 3. Arm the Monitor tool with a `ws` source: the URL from `connect`, description `postil review requests`, and
    `timeout_ms` 1800000.
@@ -44,7 +47,8 @@ If the postil tools are missing, the plugin's MCP server failed to start. Tell t
   do not reply to its threads or complete it, and leave the code changes you already made in place. Keep
   listening, and tell the user in one line that you dropped it and are waiting for their next review.
 - The monitor expired, or its WebSocket closed: call `connect` with `start` set to false, and re-arm the Monitor
-  with the URL it returns, without comment. The URL can change when the server restarts.
+  with the URL it returns, without comment. The URL can change when the server restarts. Don't pass `path`
+  again: `connect` keeps using the one you gave it first.
 - If that `connect` reports the server is not running, it gives you a command to watch for its return. Arm a
   Monitor with it as it says and end your turn without comment. When it reports the server is running again,
   call `connect` and re-arm the WebSocket monitor. If it reports the server did not come back, tell the user in one

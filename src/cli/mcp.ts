@@ -1,12 +1,13 @@
 import { mkdir, writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { z } from 'zod';
 import type { AgentReview, AppliedSuggestion, ListenResult, ReviewView, ThreadView } from '../core/api-types.ts';
 import { attachmentRefs, cleanName } from '../core/attachments.ts';
-import { ApiError, NotRunningError, PostilClient } from '../core/client.ts';
+import { NotRunningError, PostilClient } from '../core/client.ts';
 import { VERSION } from '../core/version.ts';
+import { NotARepoError, Repo } from '../git/repo.ts';
 import { formatPending, formatReview, formatUiThread } from './agent-format.ts';
 import { openBrowser, startDaemon, waitCommand } from './daemon.ts';
 import { describeExport, describeExports, describeImport, resumeCommand } from './transfer-format.ts';
@@ -57,22 +58,36 @@ async function withAttachments(client: PostilClient, result: string, bodies: rea
 }
 
 /**
- * The MCP server the Claude Code plugin runs. It holds no state: every call finds the review
- * server for the project through its discovery file, so the review server can be started,
- * stopped or restarted at any time without restarting Claude.
+ * The MCP server the Claude Code plugin runs. The only state it keeps is which repository the
+ * session works on. Every call finds the review server for that repository through its discovery
+ * file, so the review server can be started, stopped or restarted at any time without restarting
+ * Claude.
  */
 export function createMcpServer(env: { projectDir: string; session: string | undefined }): McpServer {
   const server = new McpServer({ name: 'postil', version: VERSION });
 
+  // The folder Claude started in, until connect is given a path. Claude can start in a folder that
+  // isn't a git working tree (e.g. one holding a bare clone and its worktrees), so connect can pick
+  // the repository, and every later tool uses it for as long as this server runs.
+  let projectDir = env.projectDir;
+  let chosen = false;
+
+  const explain = (e: unknown): string => {
+    const message = `postil: ${e instanceof Error ? e.message : String(e)}`;
+    if (e instanceof NotARepoError && !chosen) {
+      return `${message}. Call connect with path set to the repository or worktree to review, and postil uses it from then on.`;
+    }
+    return message;
+  };
+
   const withClient = async (fn: (client: PostilClient) => Promise<ToolResult>): Promise<ToolResult> => {
     try {
-      return await fn(await PostilClient.connect(env.projectDir, { session: env.session }));
+      return await fn(await PostilClient.connect(projectDir, { session: env.session }));
     } catch (e) {
       if (e instanceof NotRunningError) {
         return failure(`${e.message}. Call connect to start it.`);
       }
-      if (e instanceof ApiError) return failure(`postil: ${e.message}`);
-      return failure(`postil: ${e instanceof Error ? e.message : String(e)}`);
+      return failure(explain(e));
     }
   };
 
@@ -83,27 +98,44 @@ export function createMcpServer(env: { projectDir: string; session: string | und
       description:
         "Register this session to receive postil reviews, starting the repository's review server if needed, and get the " +
         'URL to watch. Arm the Monitor tool on it so you are woken when the user submits a review. After the monitor ' +
-        'closes, call again with start=false, so a server the user stopped on purpose is not restarted.',
-      inputSchema: { start: z.boolean().optional().describe('Start the server if it is not running (default true).') },
+        'closes, call again with start=false, so a server the user stopped on purpose is not restarted. Pass path when ' +
+        "the session's folder isn't the git working tree to review (e.g. it holds several worktrees); later tools, and " +
+        'later calls to connect without a path, keep using that repository.',
+      inputSchema: {
+        start: z.boolean().optional().describe('Start the server if it is not running (default true).'),
+        path: z.string().min(1).optional().describe(
+          "A folder inside the repository or worktree to review, absolute or relative to the session's folder. " +
+            "Default: the repository chosen earlier, or else the session's folder.",
+        ),
+      },
     },
-    async ({ start }) => {
+    async ({ start, path }) => {
+      if (path !== undefined) {
+        try {
+          projectDir = (await Repo.open(resolve(env.projectDir, path))).root;
+          chosen = true;
+        } catch (e) {
+          return failure(`postil: ${e instanceof Error ? e.message : String(e)}`);
+        }
+      }
       let note: string | null = null;
       if (start !== false) {
         try {
-          const started = await startDaemon(env.projectDir);
+          const started = await startDaemon(projectDir);
           if (started.restarted) note = 'Restarted the review server, which was running an older build of postil. Tell the user to reload the review tab.';
           if (started.outdated) {
             note = 'The review server runs an older build of postil. It was left running because a review is waiting or in progress; ' +
               'it is restarted on the next connect once that review is complete.';
           }
         } catch (e) {
+          if (e instanceof NotARepoError) return failure(explain(e));
           return failure(`postil: could not start the review server: ${e instanceof Error ? e.message : String(e)}`);
         }
       } else {
         try {
-          await PostilClient.connect(env.projectDir);
+          await PostilClient.connect(projectDir);
         } catch (e) {
-          if (!(e instanceof NotRunningError)) throw e;
+          if (!(e instanceof NotRunningError)) return failure(explain(e));
           return failure(
             `The postil server is not running (it may be restarting). To be told when it is back, arm the Monitor tool ` +
               `with command: ${waitCommand(e.root)}  (description "postil server restart", timeout_ms 1800000). ` +
@@ -277,7 +309,7 @@ export function createMcpServer(env: { projectDir: string; session: string | und
         if (to !== undefined) {
           const { moveSession } = await import('./move.ts');
           let log = '';
-          const r = await moveSession(env.projectDir, to, { claudeSession, interactive: false, output: (c) => { log += c; } });
+          const r = await moveSession(projectDir, to, { claudeSession, interactive: false, output: (c) => { log += c; } });
           return text([
             log.trim(),
             '',
@@ -286,9 +318,9 @@ export function createMcpServer(env: { projectDir: string; session: string | und
           ].join('\n'));
         }
         const { exportSession } = await import('../core/transfer.ts');
-        return text(describeExport(await exportSession(env.projectDir, { ...(file !== undefined && { file }), claudeSession })));
+        return text(describeExport(await exportSession(projectDir, { ...(file !== undefined && { file }), claudeSession })));
       } catch (e) {
-        return failure(`postil: ${e instanceof Error ? e.message : String(e)}`);
+        return failure(explain(e));
       }
     },
   );
@@ -313,13 +345,13 @@ export function createMcpServer(env: { projectDir: string; session: string | und
       try {
         const { importSession, sessionExports } = await import('../core/transfer.ts');
         if (list) {
-          const entries = await sessionExports(env.projectDir);
+          const entries = await sessionExports(projectDir);
           if (!entries.length) return text('There are no exports of this repository in the transfer folder (or POSTIL_TRANSFER_DIR is not set).');
           return text([describeExports(entries), '', 'Files, in the same order:', ...entries.map((e, i) => `${i + 1}. ${e.file}`)].join('\n'));
         }
-        return text(describeImport(await importSession(env.projectDir, file, { worktree: worktree ?? true, force: force ?? false })));
+        return text(describeImport(await importSession(projectDir, file, { worktree: worktree ?? true, force: force ?? false })));
       } catch (e) {
-        return failure(`postil: ${e instanceof Error ? e.message : String(e)}`);
+        return failure(explain(e));
       }
     },
   );
