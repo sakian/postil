@@ -462,7 +462,7 @@ export class Repo {
     if (ignoreCase !== 'true') return false;
 
     const paths = async (opts: { env?: Record<string, string> }): Promise<string[]> =>
-      (await gitText(this.root, ['ls-files', '-z'], opts)).split(' ').filter(Boolean);
+      (await gitText(this.root, ['ls-files', '-z'], opts)).split('\0').filter(Boolean);
     const staged = new Set(await paths({}));
     const stagedFolded = new Set([...staged].map((p) => p.toLowerCase()));
     return (await paths({ env })).some((p) => !staged.has(p) && stagedFolded.has(p.toLowerCase()));
