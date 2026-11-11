@@ -74,6 +74,8 @@ interface State {
   sections: AnchoredSectionMark[];
   /** Done hunks the user unfolded (true) or folded (false) this session, by `diffKey#hunk`. */
   unfoldedDone: Record<string, boolean>;
+  /** Rewritten sections whose removed lines the user asked to see this session, by `diffKey#section`. */
+  shownRemoved: Record<string, boolean>;
   commits: Loadable<CommitsInfo> | null;
   reviews: ReviewView[];
   draft: ReviewView | null;
@@ -134,6 +136,7 @@ interface Actions {
   setSectionsDone(file: FileChange, sections: readonly Section[], done: boolean): Promise<void>;
   archiveResolved(): Promise<void>;
   setDoneUnfolded(keys: readonly string[], unfolded: boolean): void;
+  setRemovedShown(key: string, shown: boolean): void;
   applySuggestion(commentId: number): Promise<void>;
   loadDiff(file: FileChange, force?: boolean): Promise<void>;
   /** Drop a pending diff request for a file that left the page, so it stops holding a connection. */
@@ -301,6 +304,7 @@ export const useStore = create<Store>()((set, get) => {
     threads: [],
     sections: [],
     unfoldedDone: {},
+    shownRemoved: {},
     commits: null,
     reviews: [],
     draft: null,
@@ -498,6 +502,10 @@ export const useStore = create<Store>()((set, get) => {
 
     setDoneUnfolded(keys, unfolded) {
       set((s) => ({ unfoldedDone: { ...s.unfoldedDone, ...Object.fromEntries(keys.map((k) => [k, unfolded])) } }));
+    },
+
+    setRemovedShown(key, shown) {
+      set((s) => ({ shownRemoved: { ...s.shownRemoved, [key]: shown } }));
     },
 
     async loadCommits() {

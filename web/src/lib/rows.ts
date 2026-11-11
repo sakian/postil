@@ -72,6 +72,11 @@ export type Row =
   | { type: 'hunk'; key: string; header: string; hunk: number }
   /** A section the user marked done, or a hunk whose sections all are, folded to one line. */
   | { type: 'done'; key: string; hunk: number; section: number | null; changed: number }
+  /**
+   * The removed lines of a rewritten section (see `rewrittenSections`), folded to one line, or,
+   * when shown, the control above them that hides them again.
+   */
+  | { type: 'removed'; key: string; hunk: number; section: number; count: number; shown: boolean }
   | {
       type: 'line';
       key: string;
@@ -209,6 +214,35 @@ export function toSplit(rows: readonly Row[]): SplitRow[] {
     }
   }
   flush();
+  return out;
+}
+
+/**
+ * Fold the removed lines of rewritten sections to one row each, leaving their added lines to
+ * read on their own. A section in `shown` keeps its removed lines, with a row above them to hide
+ * them again. Only for unified rows, since the split view already puts the new code on its own side.
+ */
+export function foldRemoved(
+  rows: readonly Row[],
+  rewritten: ReadonlyMap<number, number>,
+  shown: ReadonlySet<number>,
+): Row[] {
+  const out: Row[] = [];
+  const emitted = new Set<number>();
+  for (const r of rows) {
+    const s = r.type === 'line' && r.kind === 'del' ? r.section : null;
+    const count = s === null ? undefined : rewritten.get(s);
+    if (s === null || count === undefined || r.type !== 'line') {
+      out.push(r);
+      continue;
+    }
+    const open = shown.has(s);
+    if (!emitted.has(s)) {
+      emitted.add(s);
+      out.push({ type: 'removed', key: `r${s}`, hunk: r.hunk!, section: s, count, shown: open });
+    }
+    if (open) out.push(r);
+  }
   return out;
 }
 
