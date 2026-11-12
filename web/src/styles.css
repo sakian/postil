@@ -532,6 +532,10 @@ kbd { font: 12px var(--mono); padding: 1px 6px; border: 1px solid var(--border);
   .line.add .wd, .code.add .wd { background: rgba(46, 160, 67, 0.45); }
 }
 
+/* A line that only had text inserted shows once, so most of it is unchanged. It gets a lighter
+   tint and leaves the colour to the inserted words. */
+.line.add.inserted .code { background: color-mix(in srgb, var(--add-bg) 40%, var(--bg)); }
+
 /* ------------------------------------------------------------------ sticky section headers */
 /* A hunk's header stays in view under the file header while you read it. */
 .sticky-hunk td {

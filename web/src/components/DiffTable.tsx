@@ -1,7 +1,7 @@
 import { Fragment, useCallback, useEffect, useMemo, useRef, type MouseEvent, type ReactNode } from 'react';
 import type { FileChange, FileDiff, Side, ThreadView } from '../../../src/core/api-types.ts';
 import { normalize, type Range } from '../lib/ranges.ts';
-import { buildRows, EXPAND_STEP, foldDone, foldRemoved, gaps, oldToNewInGaps, toSplit, type Row, type SplitRow } from '../lib/rows.ts';
+import { buildRows, EXPAND_STEP, foldDone, foldRemoved, gaps, mergeInsertions, oldToNewInGaps, toSplit, type Row, type SplitRow } from '../lib/rows.ts';
 import { fileSections, rewrittenSections, sectionDone, validMarks, type Section } from '../lib/sections.ts';
 import { isSelected, splitSelection, unifiedSelection, type Selection } from '../lib/selection.ts';
 import { currentLines, diffKey, markKey, sidePath, viewedBlob } from '../format.ts';
@@ -118,9 +118,24 @@ export function DiffTable({ file, diff, threads }: Props) {
     }
     return { byUser, needed, all: new Set([...byUser, ...needed]) };
   }, [rewritten, parts, threads, composer, selection, shownRemoved, key]);
+  // A removed line that only had text inserted into it shows once, as its added line, in the
+  // unified view. It shows again while a conversation, the composer or a selection is on it, and
+  // a rewritten section's removed lines are left to `foldRemoved`.
+  const insertions = useMemo(() => new Map(pairs.filter((p) => p.diff.old.length === 0).map((p) => [p.oldNo, p.newNo])), [pairs]);
+  const keepRemoved = useCallback(
+    (r: LineRow): boolean => {
+      const n = r.oldNo!;
+      const covers = (side: Side, start: number | null, end: number | null) => side === 'old' && start !== null && end !== null && n >= start && n <= end;
+      return (r.section !== null && rewritten.has(r.section)) ||
+        threads.some((t) => covers(t.side, currentLines(t).start, currentLines(t).end)) ||
+        (composer !== null && covers(composer.side, composer.start, composer.end)) ||
+        (selection !== null && covers(selection.side, selection.start, selection.end));
+    },
+    [rewritten, threads, composer, selection],
+  );
   const rows = useMemo(
-    () => (view === 'split' ? allRows : foldRemoved(allRows, rewritten, removedOpen.all)),
-    [view, allRows, rewritten, removedOpen],
+    () => (view === 'split' ? allRows : foldRemoved(mergeInsertions(allRows, insertions, keepRemoved), rewritten, removedOpen.all)),
+    [view, allRows, insertions, keepRemoved, rewritten, removedOpen],
   );
   const split = useMemo(() => (view === 'split' ? toSplit(allRows) : null), [allRows, view]);
   const wordsFor = (side: Side, no: number | null): Span[] | undefined => (no === null ? undefined : words.get(`${side}:${no}`));
@@ -368,8 +383,8 @@ export function DiffTable({ file, diff, threads }: Props) {
             const selected = isSelected(selection, side, no) || (r.kind === 'context' && isSelected(selection, 'old', r.oldNo));
             return (
               <Fragment key={r.key}>
-                <tr className={`line ${r.kind}${r.expanded ? ' revealed' : ''}${selected ? ' selected' : ''}`} onMouseEnter={() => onRowEnter(i)}>
-                  <td className="num" data-no={r.oldNo ?? ''} onMouseDown={(e) => onGutterDown(e, i, null)} />
+                <tr className={`line ${r.kind}${r.insertedInto !== undefined ? ' inserted' : ''}${r.expanded ? ' revealed' : ''}${selected ? ' selected' : ''}`} onMouseEnter={() => onRowEnter(i)}>
+                  <td className="num" data-no={r.oldNo ?? r.insertedInto ?? ''} onMouseDown={(e) => onGutterDown(e, i, null)} />
                   <td className="num" data-no={r.newNo ?? ''} onMouseDown={(e) => onGutterDown(e, i, null)} />
                   <td className="marker">{addButton(i, null)}{r.kind === 'add' ? '+' : r.kind === 'del' ? '-' : ' '}</td>
                   <td className="code">{sectionControls(r.section, first[i]!)}{r.kind === 'del'

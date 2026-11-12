@@ -147,6 +147,30 @@ describe('diff rows from synthetic hunks', () => {
   it('has no rows for a file with no hunks, such as a pure rename', () => {
     assert.deepEqual(buildRows({ hunks: [], new_lines: 10 }, { revealed: [[1, 10]], newLines: [] }), []);
   });
+
+  describe('lines that only had text inserted', async () => {
+    const { mergeInsertions } = await import('../../web/src/lib/rows.ts');
+    const { wordPairs } = await import('../../web/src/lib/worddiff.ts');
+    const h = hunk(1, 2, 1, 3, [
+      { kind: 'del', old_no: 1, new_no: null, text: 'at most MAX_RATE.' },
+      { kind: 'del', old_no: 2, new_no: null, text: 'let x = 1;' },
+      { kind: 'add', old_no: null, new_no: 1, text: 'at most MAX_RATE. A pump' },
+      { kind: 'add', old_no: null, new_no: 2, text: 'publishes as soon as it can.' },
+      { kind: 'add', old_no: null, new_no: 3, text: 'let x = 2;' },
+    ]);
+    const rows = buildRows({ hunks: [h], new_lines: 3 }, { revealed: [], newLines: null });
+    const insertions = new Map(wordPairs(rows).filter((p) => p.diff.old.length === 0).map((p) => [p.oldNo, p.newNo]));
+    const lines = (rs: Row[]) => rs.flatMap((r) => (r.type === 'line' ? [`${r.kind} ${r.oldNo ?? r.insertedInto ?? '-'} ${r.newNo ?? '-'}`] : []));
+
+    it('shows the line once, as its added line with both line numbers', () => {
+      assert.deepEqual([...insertions], [[1, 1]]);
+      assert.deepEqual(lines(mergeInsertions(rows, insertions, () => false)), ['del 2 -', 'add 1 1', 'add - 2', 'add - 3']);
+    });
+
+    it('keeps the removed line when asked, like when a conversation is on it', () => {
+      assert.deepEqual(lines(mergeInsertions(rows, insertions, (r) => r.oldNo === 1)), ['del 1 -', 'del 2 -', 'add - 1', 'add - 2', 'add - 3']);
+    });
+  });
 });
 
 describe('selection', () => {
