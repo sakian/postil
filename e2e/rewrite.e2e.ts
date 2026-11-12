@@ -73,6 +73,18 @@ describe('a rewritten block', { timeout: 90_000 }, () => {
     await until(async () => (await added.locator('.wd').count()) > 0, 'the added words to be highlighted');
     assert.equal(errors.length, 0, errors.join('\n'));
   });
+
+  it('shows a sentence that only had words added once, with both line numbers', async () => {
+    assert.equal(await notes().locator('tr.line.del').count(), 0);
+    const row = notes().locator('tr.line.add.inserted');
+    assert.equal(await row.count(), 1);
+    assert.deepEqual(await row.locator('td.num').evaluateAll((tds) => tds.map((td) => td.getAttribute('data-no'))), ['2', '2']);
+    await page.getByRole('button', { name: 'Split', exact: true }).click();
+    await notes().locator('table.diff-split').waitFor();
+    assert.equal(await notes().locator('td.code.del').count(), 1, 'the split view keeps both lines');
+    await page.getByRole('button', { name: 'Unified', exact: true }).click();
+    await notes().locator('table.diff-unified').waitFor();
+  });
 });
 
 async function until(check: () => Promise<boolean>, what: string, timeoutMs = 8000): Promise<void> {

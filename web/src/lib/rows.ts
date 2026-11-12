@@ -91,6 +91,11 @@ export type Row =
       hunk: number | null;
       /** The section this changed line belongs to; null for context. */
       section: number | null;
+      /**
+       * For an added line that only inserts text into a removed line, the removed line's number.
+       * The removed line isn't shown, since all of its text is in this one (see `mergeInsertions`).
+       */
+      insertedInto?: number;
     };
 
 export interface RowOptions {
@@ -242,6 +247,36 @@ export function foldRemoved(
       out.push({ type: 'removed', key: `r${s}`, hunk: r.hunk!, section: s, count, shown: open });
     }
     if (open) out.push(r);
+  }
+  return out;
+}
+
+/**
+ * Show a line that only had text inserted into it once, as its added line with the insertion
+ * highlighted, instead of as a removed line and an added line that repeat the same text.
+ * `insertions` maps each such removed line to the added line it became, and a removed line that
+ * `keep` returns true for stays as is (like when a conversation is on it). Only for unified rows,
+ * since the split view already shows the two lines side by side.
+ */
+export function mergeInsertions(
+  rows: readonly Row[],
+  insertions: ReadonlyMap<number, number>,
+  keep: (row: Extract<Row, { type: 'line' }>) => boolean,
+): Row[] {
+  const merged = new Map<number, number>();
+  for (const r of rows) {
+    if (r.type !== 'line' || r.kind !== 'del' || r.oldNo === null) continue;
+    const newNo = insertions.get(r.oldNo);
+    if (newNo !== undefined && !keep(r)) merged.set(newNo, r.oldNo);
+  }
+  if (merged.size === 0) return [...rows];
+  const dropped = new Set(merged.values());
+  const out: Row[] = [];
+  for (const r of rows) {
+    if (r.type !== 'line') out.push(r);
+    else if (r.kind === 'del' && r.oldNo !== null && dropped.has(r.oldNo)) continue;
+    else if (r.kind === 'add' && r.newNo !== null && merged.has(r.newNo)) out.push({ ...r, insertedInto: merged.get(r.newNo)! });
+    else out.push(r);
   }
   return out;
 }
